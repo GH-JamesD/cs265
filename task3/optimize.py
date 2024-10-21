@@ -7,10 +7,14 @@ from collections import defaultdict
 TERMINATORS = 'br', 'jmp', 'ret'
 
 blocks = []
+blockmap = {}
 preds = set()
 succs = set()
 dominators = {}
 fronts  = {}
+tree = {}
+vardefs = {}
+phis = {}
 
 def form_blocks(instrs):
     """Given a list of Bril instructions, generate a sequence of
@@ -121,29 +125,138 @@ def get_idoms():
 
 
 def compute_frontier():
-    front = defaultdict(set)
-    idoms = get_idoms()
-    for b in preds.keys() | succs.keys():
-        if len(preds[b]) >= 2:
-            for p in preds[b]:
-                runner = p
-                while p != idoms[b]:
-                    front[runner].add(b)
-                    if (idoms[runner]):
-                        runner = idoms[runner]
-                    else:
-                        break
-    return front
+    rev_dominators = defaultdict(set)
+    for dom in dominators:
+        for domd in dominators[dom]:
+            rev_dominators[domd].add(dom)
+
+    frontier = defaultdict(set)
+    for dom in dominators:
+        domset = set()
+        for domd in rev_dominators[dom]:
+                domset = domset | succs[domd]
+        for item in domset:
+            if item not in rev_dominators[dom] or item == dom:
+                frontier[dom].add(item)
+    return frontier
+
+
+def compute_tree():
+    rev_dominators = defaultdict(set)
+    for dom in dominators:
+        for domd in dominators[dom]:
+            rev_dominators[domd].add(dom)
+
+    two_away = defaultdict(set)
+
+    for dom in rev_dominators:
+        for item in rev_dominators[dom] - {dom}:
+            two_away[dom] = two_away[dom] | (rev_dominators[item] - {item})
+
+    dom_tree = defaultdict(set)
+
+    for dom in rev_dominators:
+        for item in rev_dominators[dom] - {dom}:
+            if item not in two_away[dom]:
+                dom_tree[dom] = dom_tree[dom] | {item}
     
+    return dom_tree
+
+def find_vars():
+    vardefs = defaultdict(set)
+    for block in blocks:
+        for instr in block:
+            if "dest" in instr:
+                vardefs[instr["dest"]].add(block[0]["label"])
+    return vardefs
+
+def place_phi():
+    global vardefs
+    phis = defaultdict(list)
+    for var in vardefs.keys():
+        blocks_to_add_phi = defaultdict(set)
+        for def_block in vardefs[var]:
+            for block in fronts[def_block]:
+                blocks_to_add_phi[block].add(def_block)
+        for block in blocks_to_add_phi:
+            vartype = ""
+            for inst in blockmap[next(iter(blocks_to_add_phi[block]))]:
+                if "dest" in inst and inst["dest"] == var:
+                    vartype = inst["type"]
+            newinst = {"op": "phi", "dest": var, "og": var, "type": vartype, "args": [], "labels": []}
+            vardefs[var].add(block)
+            phis[block].append(newinst)
+    return phis
+
+
+var_nums = defaultdict(int)
+
+def fresh_name(var):
+    global var_nums
+    if var not in var_nums:
+        var_nums[var] = 1
+    out = var + str(var_nums[var])
+    var_nums[var] += 1
+    return out
+
+def rename_vars(args):
+    stack = defaultdict(list, {var: [var] for var in args})
+
+    def rename_block(block):
+        oldstack = {var: stack for var, stack in stack.items()}
+        for phi in phis[block]:
+            fresh = fresh_name(phi["dest"])
+            stack[phi["dest"]].append(fresh)
+            phi["dest"] = fresh
+        for inst in blockmap[block]:
+            if "op" in inst:
+                if "args" in inst:
+                    inst["args"] = [stack[arg][-1] for arg in inst["args"]]
+                if "dest" in inst:
+                    fresh = fresh_name(inst["dest"])
+                    stack[inst["dest"]].append(fresh)
+                    inst["dest"] = fresh
+        for succ in succs[block]:
+            for phi in phis[succ]:
+                v = phi["og"]
+                if stack[v]:
+                    phi["args"].append(stack[v][-1])
+                    phi["labels"].append(block)
+                else:
+                    phi["args"].append("__undefined")
+                    phi["labels"].append(block)
+        for child in tree[block]:
+            rename_block(child)
+        
+        stack.clear()
+        stack.update(oldstack)
+
+    first = list(succs.keys())[0]
+    rename_block(first)
+
+    for block, phies in phis.items():
+        for phi in phies:
+            if (phi["args"]):
+                phi.pop("og")
+                blockmap[block] = [phi] + blockmap[block]
+
+
 
 
 if __name__ == "__main__":
     prog = json.load(sys.stdin)
     for fn in prog["functions"]:
         blocks = list(form_blocks(fn["instrs"]))
+        blockmap = {b[0]["label"]: b for b in blocks}
         preds, succs = predss_and_successors(blocks)
         dominators = compute_dominators()
         fronts = compute_frontier()
-        print(fronts)
+        tree = compute_tree()
+        vardefs = find_vars()
+        phis = place_phi()
+        rename_vars(fn["args"] if "args" in fn else [])
+        blocks = list(blockmap.values())
+        #Up-to-date SSA instructions now in blockmap and blocks
+        print(blockmap)
 
-    #7json.dump(prog, sys.stdout, indent=2)
+    #json.dump(prog, sys.stdout, indent=2)
