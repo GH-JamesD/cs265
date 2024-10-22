@@ -26,12 +26,16 @@ def form_blocks(instrs):
     can only appear at the *start* of a basic block. Basic blocks may
     not be empty.
     """
+    entryct = 1
 
     # Start with an empty block.
     cur_block = []
 
     for instr in instrs:
         if 'op' in instr:  # It's an instruction.
+            if not cur_block:
+                cur_block.append({"label": "entry" + str(entryct)})
+                entryct += 1
             # Add the instruction to the currently-being-formed block.
             cur_block.append(instr)
 
@@ -200,10 +204,11 @@ def fresh_name(var):
     return out
 
 def rename_vars(args):
-    stack = defaultdict(list, {var: [var] for var in args})
+    stack = defaultdict(list, {arg["name"]: [arg["name"]] for arg in args})
 
     def rename_block(block):
-        oldstack = {var: stack for var, stack in stack.items()}
+        nonlocal stack
+        oldstack = {var: list(stack) for var, stack in stack.items()}
         for phi in phis[block]:
             fresh = fresh_name(phi["dest"])
             stack[phi["dest"]].append(fresh)
@@ -238,7 +243,11 @@ def rename_vars(args):
         for phi in phies:
             if (phi["args"]):
                 phi.pop("og")
-                blockmap[block] = [phi] + blockmap[block]
+                if len(blockmap[block]) > 1:
+                    blockmap[block] = [blockmap[block][0]] + [phi] + blockmap[block][1:]
+                else:
+                    blockmap[block] = [blockmap[block][0]] + [phi]
+
 
 
 
@@ -257,6 +266,8 @@ if __name__ == "__main__":
         rename_vars(fn["args"] if "args" in fn else [])
         blocks = list(blockmap.values())
         #Up-to-date SSA instructions now in blockmap and blocks
-        print(blockmap)
-
-    #json.dump(prog, sys.stdout, indent=2)
+        outinst = []
+        for block in blocks:
+            outinst.extend(block)
+        fn["instrs"] = outinst
+    json.dump(prog, sys.stdout, indent=2)
