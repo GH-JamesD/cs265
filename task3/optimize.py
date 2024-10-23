@@ -2,19 +2,19 @@ import json
 import sys
 import random
 import string
-from collections import defaultdict
+from collections import defaultdict, OrderedDict, deque
 
 TERMINATORS = 'br', 'jmp', 'ret'
 
-blocks = []
-blockmap = {}
-preds = set()
-succs = set()
-dominators = {}
-fronts  = {}
-tree = {}
-vardefs = {}
-phis = {}
+# blocks = []
+# blockmap = {}
+# preds = set()
+# succs = set()
+# dominators = {}
+# fronts  = {}
+# tree = {}
+# vardefs = {}
+# phis = {}
 
 def form_blocks(instrs):
     """Given a list of Bril instructions, generate a sequence of
@@ -58,15 +58,13 @@ def form_blocks(instrs):
     if cur_block:
         yield cur_block
     
-
-
-def predss_and_successors(blocks):
+def predss_and_successors(block_labels, blockmap):
     preds = defaultdict(set)
     succs = defaultdict(set)
 
-    for i, block in enumerate(blocks):
+    for i, name in enumerate(block_labels):
+        block = blockmap[name]
         last_instr = block[-1]
-        name = block[0]["label"]
         if 'op' in last_instr and last_instr['op'] == 'br':
             if 'labels' in last_instr:
                 succs[name] = set(last_instr['labels'])
@@ -74,8 +72,8 @@ def predss_and_successors(blocks):
             if 'labels' in last_instr:
                 succs[name] = set([last_instr['labels'][0]])
         else:
-            if i + 1 < len(blocks):
-                succs[name] = set([blocks[i + 1][0]["label"]])
+            if i + 1 < len(blockmap):
+                succs[name] = set([block_labels[i + 1]])
         for s in succs[name]:
             preds[s].add(name)
 
@@ -98,7 +96,7 @@ def reverse_postorder(succs):
 
     return postorder[::-1]
 
-def compute_dominators():
+def compute_dominators(preds, succs):
     doms = defaultdict(set)
     for name in preds:
         doms[name] = set(name for name in preds).union(set(name for name in succs))
@@ -128,7 +126,7 @@ def get_idoms():
     return idoms
 
 
-def compute_frontier():
+def compute_frontier(succs, dominators):
     rev_dominators = defaultdict(set)
     for dom in dominators:
         for domd in dominators[dom]:
@@ -145,7 +143,7 @@ def compute_frontier():
     return frontier
 
 
-def compute_tree():
+def compute_tree(dominators):
     rev_dominators = defaultdict(set)
     for dom in dominators:
         for domd in dominators[dom]:
@@ -166,15 +164,16 @@ def compute_tree():
     
     return dom_tree
 
-def find_vars():
+def find_vars(block_labels, blockmap):
     vardefs = defaultdict(set)
-    for block in blocks:
+    for label in block_labels:
+        block = blockmap[label]
         for instr in block:
             if "dest" in instr:
                 vardefs[instr["dest"]].add(block[0]["label"])
     return vardefs
 
-def place_phi():
+def place_phi(blockmap, fronts):
     global vardefs
     phis = defaultdict(list)
     for var in vardefs.keys():
@@ -251,23 +250,126 @@ def rename_vars(args):
 
 
 
+def find_natural_loops(block_labels, preds, succs, dominators):
+    backedges = []
+    for label in block_labels:
+        name1 = label
+        for name2 in succs[name1]:
+            if name2 in dominators[name1]:
+                backedges.append((name1, name2))
+
+    natural_loops = []
+    for (A, B) in backedges:
+        loop_nodes = set((A, B))
+        worklist = deque([A])
+        while worklist:
+            node = worklist.popleft()
+            for pred in preds[node]:
+                if pred not in loop_nodes:
+                    loop_nodes.add(pred)
+                    worklist.append(pred)
+
+        natural_loops.append(loop_nodes)
+    return natural_loops
+
+def is_pure_deterministic(instr):
+    # extra conservative, some of these can be moved with careful analysis
+    if instr["op"] in ["jmp", "br", "ret", "phi", "print", "call", "store", "load"]:
+        return False
+    if instr["op"] == "div":
+        return False
+    return True
+
+def move_invariant_code(natural_loops, block_labels, blockmap, preds):
+    pre_header_count = 1
+
+    for loop in natural_loops:
+        lines_to_move = {block: set() for block in loop} # need to preserve line order
+        invariant_vars = set()
+
+        defs_in_loop = set()
+        for block in loop:
+            for instr in blockmap[block]:
+                if "dest" in instr:
+                    defs_in_loop.add(instr["dest"])
+
+        changed = True
+        while changed: # not converged
+            changed = False
+            for block in loop:
+                for i, instr in enumerate(blockmap[block]):
+                    # skip labels
+                    if "op" not in instr:
+                        continue
+                    if i in lines_to_move[block]:
+                        continue
+                    # mark LI if pure deterministic and all fn args LI
+                    if is_pure_deterministic(instr) and all(
+                        (arg not in defs_in_loop) or (arg in invariant_vars)
+                        for arg in instr.get("args", [])
+                    ):
+                        lines_to_move[block].add(i)
+                        if "dest" in instr:
+                            invariant_vars.add(instr["dest"])
+                        changed = True
+    
+        # create pre-header to hold moved instructions
+        if any(ll for ll in lines_to_move.values()):
+            pre_header_label = "preheader" + str(pre_header_count)
+            pre_header_count += 1
+
+            loop_header = max(loop, key=lambda b: len(dominators[b]))
+            moved_instrs = []
+            for block in loop: # TODO: do we need to iterate through blocks in a specific order?
+                kept_instrs_block = []
+                for i, instr in enumerate(blockmap[block]):
+                    # update phi functions if var was moved
+                    if instr.get("op") == "phi":
+                        for j, arg in enumerate(instr["args"]):
+                            if arg in invariant_vars:
+                                instr["labels"][j] = pre_header_label
+
+                    if i in lines_to_move[block]:
+                        moved_instrs.append(instr)
+                    else:
+                        kept_instrs_block.append(instr)
+                blockmap[block] = kept_instrs_block
+
+            block_labels.insert(block_labels.index(loop_header), pre_header_label)
+            blockmap[pre_header_label] = [{"label": pre_header_label}] + moved_instrs
+
+            # redirect non-loop blocks to enter loop through pre-header
+            for block in filter(lambda b: b not in loop, preds[loop_header]):
+                jump_instr = blockmap[block][-1]
+                for i, label in enumerate(jump_instr.get("labels", [])):
+                    if label == loop_header:
+                        jump_instr["labels"][i] = pre_header_label
+
 
 if __name__ == "__main__":
     prog = json.load(sys.stdin)
     for fn in prog["functions"]:
-        blocks = list(form_blocks(fn["instrs"]))
-        blockmap = {b[0]["label"]: b for b in blocks}
-        preds, succs = predss_and_successors(blocks)
-        dominators = compute_dominators()
-        fronts = compute_frontier()
-        tree = compute_tree()
-        vardefs = find_vars()
-        phis = place_phi()
+        block_labels = [b[0]["label"] for b in form_blocks(fn["instrs"])]
+        blockmap = dict((b[0]["label"], b) for b in form_blocks(fn["instrs"]))
+        preds, succs = predss_and_successors(block_labels, blockmap)
+        dominators = compute_dominators(preds, succs)
+        fronts = compute_frontier(succs, dominators)
+        tree = compute_tree(dominators)
+        vardefs = find_vars(block_labels, blockmap)
+        phis = place_phi(blockmap, fronts)
         rename_vars(fn["args"] if "args" in fn else [])
-        blocks = list(blockmap.values())
+        # blocks = list(blockmap.values())
+
+        # print(find_natural_loops())
+        natural_loops = find_natural_loops(block_labels, preds, succs, dominators)
+        move_invariant_code(natural_loops, block_labels, blockmap, preds)
+
         #Up-to-date SSA instructions now in blockmap and blocks
         outinst = []
-        for block in blocks:
+        for label in block_labels:
+            block = blockmap[label]
             outinst.extend(block)
         fn["instrs"] = outinst
+
+
     json.dump(prog, sys.stdout, indent=2)
