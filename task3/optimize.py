@@ -356,6 +356,65 @@ def move_invariant_code(natural_loops, block_labels, blockmap, preds):
                     if label == header:
                         jump_instr["labels"][i] = pre_header_label
 
+def meet(in_sets):
+    if not in_sets:
+        return set()
+    result = set(in_sets[0])
+    for in_set in in_sets[1:]:
+        result.update(in_set)
+    return result
+
+def transfer(block, out_set):
+    kills = set()
+    gens = set()
+
+    for instr in reversed(block):
+        if "dest" in instr:
+            kills.add(instr["dest"])
+        gens.update(arg for arg in instr.get("args", []))
+
+    out = gens | (set(out_set) - kills)
+    
+    return block, out
+
+def liveness_analysis(block_labels, blockmap, preds, succs, args):
+        blocks = blockmap
+
+        # Initialize in/out sets for each block
+        in_sets = {label: set() for label in block_labels}
+        out_sets = {label: set() for label in block_labels}
+        worklist = deque(block_labels)
+
+        for arg in args:
+            in_sets[block_labels[0]].add(arg["name"])
+
+        while worklist:
+            b = worklist.pop()
+            # Compute out[b] as the meet of in[successors]
+            out_sets[b] = meet([in_sets[succ] for succ in succs[b]])
+
+            # Propagate constants within the block
+            new_block, in_set = transfer(blocks[b], out_sets[b])
+
+            if in_sets[b] != in_set:
+                in_sets[b] = in_set
+                worklist.extend(preds[b])
+
+
+            blocks[b] = new_block
+
+        for i in block_labels:
+            kept = []
+            used = set()
+            for instr in reversed(blocks[i]):
+                if "dest" not in instr:
+                    kept.append(instr)
+                if "dest" in instr and (instr["dest"] in out_sets[i] or instr["dest"] in used):
+                    kept.append(instr)
+                used.update(instr.get("args", []))
+            blocks[i] = kept[::-1]
+    
+        # Replace the function instructions with the optimized blocks
 
 if __name__ == "__main__":
     prog = json.load(sys.stdin)
@@ -369,12 +428,16 @@ if __name__ == "__main__":
         vardefs = find_vars(block_labels, blockmap)
         phis = place_phi(blockmap, fronts)
         rename_vars(fn["args"] if "args" in fn else [])
-        # blocks = list(blockmap.values())
 
-        natural_loops = find_natural_loops(block_labels, preds, succs, dominators)
-        move_invariant_code(natural_loops, block_labels, blockmap, preds)
+        #natural_loops = find_natural_loops(block_labels, preds, succs, dominators)
+        #move_invariant_code(natural_loops, block_labels, blockmap, preds)
+        
 
         from_ssa(blockmap)
+        liveness_analysis(block_labels, blockmap, preds, succs, fn["args"] if "args" in fn else [])
+
+
+
 
         #Up-to-date SSA instructions now in blockmap and blocks
         outinst = []
