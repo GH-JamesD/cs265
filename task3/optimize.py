@@ -191,6 +191,21 @@ def place_phi(blockmap, fronts):
             phis[block].append(newinst)
     return phis
 
+def from_ssa(blockmap):
+    for block in blockmap.values():
+        for instr in reversed(block):
+            if instr.get("op") == "phi":
+                for label, arg in zip(instr.get("labels", []), instr.get("args", [])):
+                    if arg == '__undefined':
+                        continue
+                    newdef = {"op": "id", "dest": instr["dest"], "args": [arg], "type": instr["type"]}
+                    pred = blockmap[label]
+                    if pred[-1].get("op") in TERMINATORS:
+                        pred.insert(-1, newdef)
+                    else:
+                        pred.append(newdef)
+                block.remove(instr)
+
 
 var_nums = defaultdict(int)
 
@@ -247,9 +262,6 @@ def rename_vars(args):
                 else:
                     blockmap[block] = [blockmap[block][0]] + [phi]
 
-
-
-
 def find_natural_loops(block_labels, preds, succs, dominators):
     backedges = []
     for label in block_labels:
@@ -269,7 +281,7 @@ def find_natural_loops(block_labels, preds, succs, dominators):
                     loop_nodes.add(pred)
                     worklist.append(pred)
 
-        natural_loops.append(loop_nodes)
+        natural_loops.append((B, loop_nodes))
     return natural_loops
 
 def is_pure_deterministic(instr):
@@ -283,12 +295,12 @@ def is_pure_deterministic(instr):
 def move_invariant_code(natural_loops, block_labels, blockmap, preds):
     pre_header_count = 1
 
-    for loop in natural_loops:
-        lines_to_move = {block: set() for block in loop} # need to preserve line order
+    for header, loop_blocks in natural_loops:
+        lines_to_move = {block: set() for block in loop_blocks} # need to preserve line order
         invariant_vars = set()
 
         defs_in_loop = set()
-        for block in loop:
+        for block in loop_blocks:
             for instr in blockmap[block]:
                 if "dest" in instr:
                     defs_in_loop.add(instr["dest"])
@@ -296,7 +308,7 @@ def move_invariant_code(natural_loops, block_labels, blockmap, preds):
         changed = True
         while changed: # not converged
             changed = False
-            for block in loop:
+            for block in loop_blocks:
                 for i, instr in enumerate(blockmap[block]):
                     # skip labels
                     if "op" not in instr:
@@ -318,9 +330,8 @@ def move_invariant_code(natural_loops, block_labels, blockmap, preds):
             pre_header_label = "preheader" + str(pre_header_count)
             pre_header_count += 1
 
-            loop_header = max(loop, key=lambda b: len(dominators[b]))
             moved_instrs = []
-            for block in loop: # TODO: do we need to iterate through blocks in a specific order?
+            for block in loop_blocks: # TODO: do we need to iterate through blocks in a specific order?
                 kept_instrs_block = []
                 for i, instr in enumerate(blockmap[block]):
                     # update phi functions if var was moved
@@ -335,14 +346,14 @@ def move_invariant_code(natural_loops, block_labels, blockmap, preds):
                         kept_instrs_block.append(instr)
                 blockmap[block] = kept_instrs_block
 
-            block_labels.insert(block_labels.index(loop_header), pre_header_label)
+            block_labels.insert(block_labels.index(header), pre_header_label)
             blockmap[pre_header_label] = [{"label": pre_header_label}] + moved_instrs
 
             # redirect non-loop blocks to enter loop through pre-header
-            for block in filter(lambda b: b not in loop, preds[loop_header]):
+            for block in filter(lambda b: b not in loop_blocks, preds[header]):
                 jump_instr = blockmap[block][-1]
                 for i, label in enumerate(jump_instr.get("labels", [])):
-                    if label == loop_header:
+                    if label == header:
                         jump_instr["labels"][i] = pre_header_label
 
 
@@ -360,9 +371,10 @@ if __name__ == "__main__":
         rename_vars(fn["args"] if "args" in fn else [])
         # blocks = list(blockmap.values())
 
-        # print(find_natural_loops())
         natural_loops = find_natural_loops(block_labels, preds, succs, dominators)
         move_invariant_code(natural_loops, block_labels, blockmap, preds)
+
+        from_ssa(blockmap)
 
         #Up-to-date SSA instructions now in blockmap and blocks
         outinst = []
