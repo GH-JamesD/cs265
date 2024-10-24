@@ -3,6 +3,7 @@ import sys
 import random
 import string
 from collections import defaultdict, OrderedDict, deque
+from copy import deepcopy
 
 TERMINATORS = 'br', 'jmp', 'ret'
 
@@ -29,13 +30,13 @@ def form_blocks(instrs):
     entryct = 1
 
     # Start with an entry label to deal with ill-formed CFGs.
-    cur_block = [{"label": "entry" + str(entryct)}]
+    cur_block = [{"label": "entry." + str(entryct)}]
     entryct += 1
 
     for instr in instrs:
         if 'op' in instr:  # It's an instruction.
             if not cur_block:
-                cur_block.append({"label": "entry" + str(entryct)})
+                cur_block.append({"label": "entry." + str(entryct)})
                 entryct += 1
             # Add the instruction to the currently-being-formed block.
             cur_block.append(instr)
@@ -264,6 +265,8 @@ def rename_vars(args):
                 else:
                     blockmap[block] = [blockmap[block][0]] + [phi]
 
+    return ssa_graph
+
 def find_natural_loops(block_labels, preds, succs, dominators):
     backedges = []
     for label in block_labels:
@@ -283,21 +286,90 @@ def find_natural_loops(block_labels, preds, succs, dominators):
                     loop_nodes.add(pred)
                     worklist.append(pred)
 
-        natural_loops.append((B, loop_nodes))
+        natural_loops.append((B, A, loop_nodes))
     return natural_loops
 
-def is_pure_deterministic(instr):
+def redirect_control_flow(block, old_label, new_label):
+    changed = False 
+    for instr in block:
+        if instr.get("op") in ["jmp", "br"]:
+            if old_label in instr["labels"]:
+                instr["labels"] = [new_label if l == old_label else l for l in instr["labels"]]
+                changed = True
+    return changed
+
+def is_idempotent(instr):
     # extra conservative, some of these can be moved with careful analysis
     if instr["op"] in ["jmp", "br", "ret", "phi", "print", "call", "store", "load"]:
         return False
-    if instr["op"] == "div":
-        return False
     return True
 
-def move_invariant_code(natural_loops, block_labels, blockmap, preds):
-    pre_header_count = 1
+def normalize_loops(natural_loops, block_labels, blockmap, preds, succs, dominators):
+    loop_cnt = 1
 
-    for header, loop_blocks in natural_loops:
+    normalized_loops = {}
+    for header, body, loop_blocks in natural_loops:
+        if header not in normalized_loops:
+            preheader_label = "preheader." + str(loop_cnt)
+            latch_label = "latch." + str(loop_cnt)
+            loop_cnt += 1
+            normalized_loops[header] = dict(
+                body = [],
+                preheader = preheader_label,
+                latch = latch_label,
+                # not strictly needed, but keeps the code nicer imo
+                # just need to make sure latch not put after block without terminator
+                last_pred = body, 
+            )
+            blockmap[preheader_label] = [{"label": preheader_label}]
+            block_labels.insert(block_labels.index(header), preheader_label)
+            for pred in preds[header]:
+                if header not in dominators[pred]:
+                    redirect_control_flow(blockmap[pred], header, preheader_label)
+
+            blockmap[latch_label] = [{"label": latch_label}, {"op": "jmp", "labels": [header]}]
+        # order doesn't matter as long as each path is in its original order
+        normalized_loops[header]["body"].extend(loop_blocks - {header})
+        redirect_control_flow(blockmap[body], header, normalized_loops[header]["latch"])
+        normalized_loops[header]["last_pred"] = max(normalized_loops[header]["last_pred"], body, key=block_labels.index)
+        
+    for header, loop_info in normalized_loops.items():
+        latch = loop_info["latch"]
+        latch_succ = block_labels.index(loop_info["last_pred"]) + 1
+        block_labels.insert(latch_succ, latch)
+
+    return normalized_loops
+
+def split_loops(normalized_loops, block_labels, blockmap, preds, succs):
+    for header, loop_info in normalized_loops.items():
+        loop_nodes = set([header] + loop_info["body"] + [loop_info["latch"]])
+        preheader_label = loop_info["preheader"]
+        # give up if it's too hard
+        if len([succ for succ in succs[header] if succ in loop_nodes]) > 1:
+            continue
+
+        if any(succ not in loop_nodes for succ in succs[header]):
+            loop_info["split"] = True
+
+            header_copy = header + ".copy"
+            blockmap[header_copy] = deepcopy(blockmap[header])
+            blockmap[header_copy][0]["label"] = header_copy
+            block_labels.insert(block_labels.index(preheader_label), header_copy)
+            for pred in preds[header]:
+                if pred not in loop_nodes:
+                    redirect_control_flow(blockmap[pred], header, header_copy)
+            for succ in succs[header]:
+                if succ in loop_nodes:
+                    # only one possible entry to loop body so it's fine
+                    redirect_control_flow(blockmap[header_copy], succ, preheader_label)
+                    blockmap[preheader_label].append({"op": "jmp", "labels": [succ]})
+                
+
+def move_invariant_code(normalized_loops, block_labels, blockmap, preds):
+    for header, loop_info in normalized_loops.items():
+        loop_blocks = set([header] + loop_info["body"] + [loop_info["latch"]])
+        preheader_label = loop_info["preheader"]
+
         lines_to_move = {block: set() for block in loop_blocks} # need to preserve line order
         invariant_vars = set()
 
@@ -312,51 +384,40 @@ def move_invariant_code(natural_loops, block_labels, blockmap, preds):
             changed = False
             for block in loop_blocks:
                 for i, instr in enumerate(blockmap[block]):
-                    # skip labels
-                    if "op" not in instr:
-                        continue
-                    if i in lines_to_move[block]:
+                    # skip labels and already marked instructions
+                    if ("op" not in instr) or (i in lines_to_move[block]):
                         continue
                     # mark LI if pure deterministic and all fn args LI
-                    if is_pure_deterministic(instr) and all(
-                        (arg not in defs_in_loop) or (arg in invariant_vars)
+                    if is_idempotent(instr) and all(
+                        ((arg not in defs_in_loop) or (arg in invariant_vars))
                         for arg in instr.get("args", [])
                     ):
                         lines_to_move[block].add(i)
                         if "dest" in instr:
                             invariant_vars.add(instr["dest"])
                         changed = True
-    
-        # create pre-header to hold moved instructions
-        if any(ll for ll in lines_to_move.values()):
-            pre_header_label = "preheader" + str(pre_header_count)
-            pre_header_count += 1
+        # fixed point reached, actually move LI code
+        moved_instrs = []
+        for block in loop_blocks: # TODO: do we need to iterate through blocks in a specific order?
+            kept_instrs_block = []
+            for i, instr in enumerate(blockmap[block]):
+                # update phi functions if var was moved
+                if instr.get("op") == "phi":
+                    for j, arg in enumerate(instr.get("args", [])):
+                        if arg in invariant_vars:
+                            instr["labels"][j] = preheader_label
 
-            moved_instrs = []
-            for block in loop_blocks: # TODO: do we need to iterate through blocks in a specific order?
-                kept_instrs_block = []
-                for i, instr in enumerate(blockmap[block]):
-                    # update phi functions if var was moved
-                    if instr.get("op") == "phi":
-                        for j, arg in enumerate(instr["args"]):
-                            if arg in invariant_vars:
-                                instr["labels"][j] = pre_header_label
-
-                    if i in lines_to_move[block]:
-                        moved_instrs.append(instr)
-                    else:
-                        kept_instrs_block.append(instr)
-                blockmap[block] = kept_instrs_block
-
-            block_labels.insert(block_labels.index(header), pre_header_label)
-            blockmap[pre_header_label] = [{"label": pre_header_label}] + moved_instrs
-
-            # redirect non-loop blocks to enter loop through pre-header
-            for block in filter(lambda b: b not in loop_blocks, preds[header]):
-                jump_instr = blockmap[block][-1]
-                for i, label in enumerate(jump_instr.get("labels", [])):
-                    if label == header:
-                        jump_instr["labels"][i] = pre_header_label
+                if i in lines_to_move[block]:
+                    moved_instrs.append(instr)
+                else:
+                    kept_instrs_block.append(instr)
+            blockmap[block] = kept_instrs_block
+        if "split" in loop_info:
+            jmp_instr = blockmap[preheader_label].pop()
+            blockmap[preheader_label].extend(moved_instrs)
+            blockmap[preheader_label].append(jmp_instr)
+        else:
+            blockmap[preheader_label].extend(moved_instrs)
 
 def meet(in_sets):
     if not in_sets:
@@ -425,19 +486,24 @@ if __name__ == "__main__":
         blockmap = dict((b[0]["label"], b) for b in form_blocks(fn["instrs"]))
         preds, succs = predss_and_successors(block_labels, blockmap)
         dominators = compute_dominators(preds, succs)
+
+        natural_loops = find_natural_loops(block_labels, preds, succs, dominators)
+        normalized_loops = normalize_loops(natural_loops, block_labels, blockmap, preds, succs, dominators)
+        # split_loops(normalized_loops, block_labels, blockmap, preds, succs)
+
+        # added new blocks, need to update preds and succs
+        preds, succs = predss_and_successors(block_labels, blockmap)
+        dominators = compute_dominators(preds, succs)
         fronts = compute_frontier(succs, dominators)
         tree = compute_tree(dominators)
         vardefs = find_vars(block_labels, blockmap)
         phis = place_phi(blockmap, fronts)
         rename_vars(fn["args"] if "args" in fn else [])
-        natural_loops = find_natural_loops(block_labels, preds, succs, dominators)
-        move_invariant_code(natural_loops, block_labels, blockmap, preds)
-        
+
+        move_invariant_code(normalized_loops, block_labels, blockmap, preds)
 
         from_ssa(blockmap)
         liveness_analysis(block_labels, blockmap, preds, succs, fn["args"] if "args" in fn else [])
-
-
 
         #Up-to-date SSA instructions now in blockmap and blocks
         outinst = []
@@ -445,6 +511,5 @@ if __name__ == "__main__":
             block = blockmap[label]
             outinst.extend(block)
         fn["instrs"] = outinst
-
 
     json.dump(prog, sys.stdout, indent=2)
