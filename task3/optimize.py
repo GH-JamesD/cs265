@@ -28,8 +28,9 @@ def form_blocks(instrs):
     """
     entryct = 1
 
-    # Start with an empty block.
-    cur_block = []
+    # Start with an entry label to deal with ill-formed CFGs.
+    cur_block = [{"label": "entry" + str(entryct)}]
+    entryct += 1
 
     for instr in instrs:
         if 'op' in instr:  # It's an instruction.
@@ -65,14 +66,16 @@ def predss_and_successors(block_labels, blockmap):
     for i, name in enumerate(block_labels):
         block = blockmap[name]
         last_instr = block[-1]
-        if 'op' in last_instr and last_instr['op'] == 'br':
+        if last_instr.get('op') == 'br':
             if 'labels' in last_instr:
                 succs[name] = set(last_instr['labels'])
-        elif 'op' in last_instr and last_instr['op'] == 'jmp':
+        elif last_instr.get('op') == 'jmp':
             if 'labels' in last_instr:
                 succs[name] = set([last_instr['labels'][0]])
+        elif last_instr.get('op') == 'ret':
+            succs[name] = set()
         else:
-            if i + 1 < len(blockmap):
+            if i + 1 < len(block_labels):
                 succs[name] = set([block_labels[i + 1]])
         for s in succs[name]:
             preds[s].add(name)
@@ -98,8 +101,9 @@ def reverse_postorder(succs):
 
 def compute_dominators(preds, succs):
     doms = defaultdict(set)
-    for name in preds:
-        doms[name] = set(name for name in preds).union(set(name for name in succs))
+    for name in preds.keys():
+        # doms[name] = set(name for name in preds).union(set(name for name in succs))
+        doms[name] = set(preds.keys())
     changed = True
     rev_post = reverse_postorder(succs)
     while changed:
@@ -207,12 +211,10 @@ def from_ssa(blockmap):
                 block.remove(instr)
 
 
-var_nums = defaultdict(int)
+var_nums = defaultdict(lambda: 1)
 
 def fresh_name(var):
     global var_nums
-    if var not in var_nums:
-        var_nums[var] = 1
     out = var + str(var_nums[var])
     var_nums[var] += 1
     return out
@@ -428,14 +430,12 @@ if __name__ == "__main__":
         vardefs = find_vars(block_labels, blockmap)
         phis = place_phi(blockmap, fronts)
         rename_vars(fn["args"] if "args" in fn else [])
-
-        #natural_loops = find_natural_loops(block_labels, preds, succs, dominators)
-        #move_invariant_code(natural_loops, block_labels, blockmap, preds)
+        natural_loops = find_natural_loops(block_labels, preds, succs, dominators)
+        move_invariant_code(natural_loops, block_labels, blockmap, preds)
         
 
         from_ssa(blockmap)
         liveness_analysis(block_labels, blockmap, preds, succs, fn["args"] if "args" in fn else [])
-
 
 
 
