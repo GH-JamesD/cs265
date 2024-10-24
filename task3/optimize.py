@@ -5,6 +5,8 @@ import string
 from collections import defaultdict, OrderedDict, deque
 from copy import deepcopy
 
+from gvn import gvn
+
 TERMINATORS = 'br', 'jmp', 'ret'
 
 # blocks = []
@@ -265,7 +267,6 @@ def rename_vars(args):
                 else:
                     blockmap[block] = [blockmap[block][0]] + [phi]
 
-    return ssa_graph
 
 def find_natural_loops(block_labels, preds, succs, dominators):
     backedges = []
@@ -357,7 +358,7 @@ def split_loops(normalized_loops, block_labels, blockmap, preds, succs):
             block_labels.insert(block_labels.index(preheader_label), header_copy)
             for pred in preds[header]:
                 if pred not in loop_nodes:
-                    redirect_control_flow(blockmap[pred], header, header_copy)
+                    redirect_control_flow(blockmap[pred], preheader_label, header_copy)
             for succ in succs[header]:
                 if succ in loop_nodes:
                     # only one possible entry to loop body so it's fine
@@ -370,6 +371,8 @@ def move_invariant_code(normalized_loops, block_labels, blockmap, preds):
         loop_blocks = set([header] + loop_info["body"] + [loop_info["latch"]])
         preheader_label = loop_info["preheader"]
 
+        exits = set([succ for b in loop_blocks - {header} for succ in succs[b] if succ not in loop_blocks])
+                     
         lines_to_move = {block: set() for block in loop_blocks} # need to preserve line order
         invariant_vars = set()
 
@@ -387,18 +390,18 @@ def move_invariant_code(normalized_loops, block_labels, blockmap, preds):
                     # skip labels and already marked instructions
                     if ("op" not in instr) or (i in lines_to_move[block]):
                         continue
-                    # mark LI if pure deterministic and all fn args LI
+                    # mark LI if pure deterministic, dominates exits, and all fn args LI
                     if is_idempotent(instr) and all(
                         ((arg not in defs_in_loop) or (arg in invariant_vars))
                         for arg in instr.get("args", [])
-                    ):
+                    ) and all(block in dominators[exit] for exit in exits):
                         lines_to_move[block].add(i)
                         if "dest" in instr:
                             invariant_vars.add(instr["dest"])
                         changed = True
         # fixed point reached, actually move LI code
         moved_instrs = []
-        for block in loop_blocks: # TODO: do we need to iterate through blocks in a specific order?
+        for block in loop_blocks: 
             kept_instrs_block = []
             for i, instr in enumerate(blockmap[block]):
                 # update phi functions if var was moved
@@ -489,7 +492,7 @@ if __name__ == "__main__":
 
         natural_loops = find_natural_loops(block_labels, preds, succs, dominators)
         normalized_loops = normalize_loops(natural_loops, block_labels, blockmap, preds, succs, dominators)
-        # split_loops(normalized_loops, block_labels, blockmap, preds, succs)
+        split_loops(normalized_loops, block_labels, blockmap, preds, succs)
 
         # added new blocks, need to update preds and succs
         preds, succs = predss_and_successors(block_labels, blockmap)
@@ -501,6 +504,7 @@ if __name__ == "__main__":
         rename_vars(fn["args"] if "args" in fn else [])
 
         move_invariant_code(normalized_loops, block_labels, blockmap, preds)
+        gvn(block_labels[0], blockmap, succs, tree)
 
         from_ssa(blockmap)
         liveness_analysis(block_labels, blockmap, preds, succs, fn["args"] if "args" in fn else [])
