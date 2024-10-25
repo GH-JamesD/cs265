@@ -102,8 +102,8 @@ def reverse_postorder(succs):
 def compute_dominators(preds, succs):
     doms = defaultdict(set)
     for name in preds.keys():
-        # doms[name] = set(name for name in preds).union(set(name for name in succs))
-        doms[name] = set(preds.keys())
+        doms[name] = set(name for name in preds).union(set(name for name in succs))
+        #doms[name] = set(preds.keys())
     changed = True
     rev_post = reverse_postorder(succs)
     while changed:
@@ -195,6 +195,19 @@ def place_phi(blockmap, fronts):
             phis[block].append(newinst)
     return phis
 
+def remove_dots(inst):
+    if "dest" in inst:
+        newdest = inst["dest"].split(".")
+        if len(newdest) > 0:
+            inst["dest"] = newdest[0]
+    if "args" in inst:
+        newargs = []
+        for arg in inst["args"]:
+            newarg = arg.split(".")
+            if len(newarg) > 0:
+                newargs.append(newarg[0])
+        inst["args"] = newargs
+
 def from_ssa(blockmap):
     for block in blockmap.values():
         for instr in reversed(block):
@@ -203,19 +216,22 @@ def from_ssa(blockmap):
                     if arg == '__undefined':
                         continue
                     newdef = {"op": "id", "dest": instr["dest"], "args": [arg], "type": instr["type"]}
+                    remove_dots(newdef)
                     pred = blockmap[label]
                     if pred[-1].get("op") in TERMINATORS:
                         pred.insert(-1, newdef)
                     else:
                         pred.append(newdef)
                 block.remove(instr)
+            else:
+                remove_dots(instr)
 
 
 var_nums = defaultdict(lambda: 1)
 
 def fresh_name(var):
     global var_nums
-    out = var + str(var_nums[var])
+    out = var  + "." + str(var_nums[var])
     var_nums[var] += 1
     return out
 
@@ -418,6 +434,11 @@ def liveness_analysis(block_labels, blockmap, preds, succs, args):
     
         # Replace the function instructions with the optimized blocks
 
+def should_keep(instr, used_vars):
+    if 'op' not in instr or 'dest' not in instr:
+        return True
+    return instr['dest'] in used_vars
+
 if __name__ == "__main__":
     prog = json.load(sys.stdin)
     for fn in prog["functions"]:
@@ -430,12 +451,28 @@ if __name__ == "__main__":
         vardefs = find_vars(block_labels, blockmap)
         phis = place_phi(blockmap, fronts)
         rename_vars(fn["args"] if "args" in fn else [])
+        usedvars = set()
+        for label in block_labels:
+            for inst in blockmap[label]:
+                args = inst.get("args", [])
+                usedvars.update(args)
+        
+        for label in block_labels:
+            outmap = []
+            for inst in blockmap[label]:
+                if should_keep(inst, usedvars):
+                    outmap.append(inst)
+            blockmap[label] = outmap
+
+        preds, succs = predss_and_successors(block_labels, blockmap)
+        
+            
         natural_loops = find_natural_loops(block_labels, preds, succs, dominators)
         move_invariant_code(natural_loops, block_labels, blockmap, preds)
         
 
         from_ssa(blockmap)
-        liveness_analysis(block_labels, blockmap, preds, succs, fn["args"] if "args" in fn else [])
+        #liveness_analysis(block_labels, blockmap, preds, succs, fn["args"] if "args" in fn else [])
 
 
 
@@ -443,7 +480,11 @@ if __name__ == "__main__":
         outinst = []
         for label in block_labels:
             block = blockmap[label]
-            outinst.extend(block)
+            for inst in block:
+                if "op" in inst and inst["op"] == "id":
+                    if inst["dest"] == inst["args"][0]:
+                        continue
+                outinst.append(inst)
         fn["instrs"] = outinst
 
 
