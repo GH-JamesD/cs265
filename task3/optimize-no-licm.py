@@ -397,6 +397,7 @@ def liveness_analysis(block_labels, blockmap, preds, succs, args):
             gens.update(arg for arg in instr.get("args", []))
 
         out = gens | (set(out_set) - kills)
+    
         return block, out
 
     blocks = blockmap
@@ -533,8 +534,8 @@ if __name__ == "__main__":
                     outmap.append(inst)
             blockmap[label] = outmap        
             
-        natural_loops = find_natural_loops(block_labels, preds, succs, dominators)
-        move_invariant_code(natural_loops, block_labels, blockmap, preds)
+        #natural_loops = find_natural_loops(block_labels, preds, succs, dominators)
+        #move_invariant_code(natural_loops, block_labels, blockmap, preds)
 
         preds, succs = predss_and_successors(block_labels, blockmap)
 
