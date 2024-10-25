@@ -218,7 +218,7 @@ var_nums = defaultdict(lambda: 1)
 
 def fresh_name(var):
     global var_nums
-    out = var + str(var_nums[var])
+    out = var  + "." + str(var_nums[var])
     var_nums[var] += 1
     return out
 
@@ -301,7 +301,7 @@ def redirect_control_flow(block, old_label, new_label):
 
 def is_idempotent(instr):
     # extra conservative, some of these can be moved with careful analysis
-    if instr["op"] in ["jmp", "br", "ret", "phi", "print", "call", "store", "load"]:
+    if instr["op"] in ["jmp", "br", "ret", "phi", "print", "call", "store", "load", "alloc", "free"]:
         return False
     return True
 
