@@ -2,6 +2,7 @@ import json
 import sys
 import random
 import string
+from utils import *
 from collections import defaultdict, OrderedDict, deque
 
 TERMINATORS = 'br', 'jmp', 'ret'
@@ -310,7 +311,7 @@ def is_pure_deterministic(instr):
         return False
     return True
 
-def move_invariant_code(natural_loops, block_labels, blockmap, preds):
+def move_invariant_code(natural_loops, block_labels, blockmap, preds, dominators):
     pre_header_count = 1
 
     for header, loop_blocks in natural_loops:
@@ -503,6 +504,235 @@ def constant_propagation_and_folding(block_labels, blockmap, preds, succs):
             worklist.extend(succs[b])
         blocks[b] = new_block
 
+
+def lvn(block, val2num = None, num2val = None, var2num = None, num2var = None):
+    if val2num is None:
+        val2num = {}
+    if num2val is None:
+        num2val = {}
+    if var2num is None:
+        var2num = {}
+    if num2var is None:
+        num2var = {}
+    counter = len(val2num) # TODO: different dominator tree children could have overlapping value numbers, is that ok?
+    # counter = 0
+
+    for inst in block:
+        if "dest" not in inst:
+            continue
+        if not isinstance(inst["type"], str):
+            continue
+
+        # if inst["op"] not in ["add", "mul", "sub", "div", "eq", "lt", "gt", "le", "ge", "not", "and", "or", "id", "phi"]:
+        if inst["op"] not in ["add", "mul", "sub", "div", "eq", "lt", "gt", "le", "ge", "not", "and", "or", "id"]:
+            counter += 1
+            num = counter
+            num2val[num] = None
+        else:
+            args = []
+            if "args" in inst:
+                for idx, arg in enumerate(inst["args"]):
+                    argnum = var2num.get(arg)
+                    if argnum is None:
+                        args.append(arg)
+                    else:
+                        if num2var[argnum][0] != arg:
+                            inst["args"][idx] = num2var[argnum][0]
+                        args.append("#." + str(argnum))
+            if inst["op"] in ["add", "mul"]:
+                args.sort()
+            if inst["op"] == "const":
+                valstring = "const " + str(inst['value'])
+            elif inst["op"] == "phi":
+                args_sorted, labels_sorted = zip(*filter(lambda pair: pair[0] != "__undefined", sorted(zip(inst["labels"], inst["args"]))))
+                valstring = str(inst['op']) + str(inst['type']) + str(args_sorted) + str(labels_sorted)
+            else:
+                valstring = str(inst['op']) + str(inst['type']) + str(args)
+
+            if inst["op"] == "id":
+                num = var2num.get(inst["args"][0])
+            else:
+                num = val2num.get(valstring)
+
+            if num is None:
+                counter += 1
+                num = counter
+                val2num[valstring] = num
+                num2val[num] = valstring
+            else:
+                inst["op"] = "id"
+                inst["args"] = [num2var[num][0]]
+                inst.pop("funcs", None)
+
+        if inst["dest"] in var2num:
+            oldnum = var2num[inst["dest"]]
+            num2var[oldnum].remove(inst["dest"])
+            if len(num2var[oldnum]) == 0:
+                old_value = num2val.get(oldnum)
+                if old_value is not None:
+                    val2num.pop(old_value)
+                num2val.pop(oldnum)
+
+        var2num[inst["dest"]] = num
+        if num not in num2var:
+            num2var[num] = [inst["dest"]]
+        else:
+            num2var[num].append(inst["dest"])
+
+    return block
+
+def gvn(func, blocks, blockmap, dominators, tree, succs):
+    val2num = {}
+    num2val = {}
+    var2num = {}
+    num2var = {}
+    counter = 0
+
+    # number function args
+    for arg in func.get("args", []):
+        counter += 1
+        num = counter
+        val2num[arg["name"]] = num
+        num2val[num] = arg["name"] # TODO: I think this is fine?
+        var2num[arg["name"]] = num
+        num2var[num] = [arg["name"]]
+
+    entry_block = min(blocks, key=lambda b: len(dominators[b]))
+
+    gvn_helper(entry_block, blockmap, tree, succs, val2num, num2val, var2num, num2var)
+
+def gvn_helper(block, blockmap, tree, succs, val2num: dict, num2val: dict, var2num: dict, num2var:dict):
+    # remove trivial phis
+    for inst in blockmap[block]:
+        if inst.get("op") == "phi":
+            args_sorted, labels_sorted = zip(*filter(lambda pair: pair[1] != "__undefined", sorted(zip(inst["labels"], inst["args"]))))
+            # useless or trivial phi
+            if len(set(var2num.get(arg, arg) for arg in args_sorted)) == 1:
+                inst["op"] = "id"
+                inst["args"] = [args_sorted[0]]
+                inst.pop("labels", None)
+                continue
+            # no need to handle phi functions now, LVN pass will do it for us
+    lvn(block, val2num, num2val, var2num, num2var)
+
+    for child in tree[block]:
+        gvn_helper(child, blockmap, tree, succs, val2num.copy(), num2val.copy(), var2num.copy(), num2var.copy())
+def returns_ptr(instr):
+    # account for both type="ptr" and type={"ptr", <Type>}
+    return "ptr" in instr.get("type", "")
+
+def alias_analysis(block_labels, blockmap, preds, arg_state=AliasLattice()):
+    constants = {inst["dest"]: inst["value"] for block in blockmap.values() for inst in block if inst.get("op") == "const"}
+
+    heap_cnt = 1
+    all_heap = AliasLattice("ALL_HEAP")
+
+    def meet(states):
+        out_states = {}
+        print('states', set(tuple(s.keys()) for s in states))
+        for v in set(tuple(s.keys()) for s in states):
+            out_states[v] = AliasLattice.union(*[s.get(v, AliasLattice()) for s in states])
+        return out_states
+
+    def transfer(block, in_state):
+        nonlocal heap_cnt
+
+        out_state = in_state.copy()
+        for instr in block:
+            if returns_ptr(instr):
+                name = instr.get("dest")
+                if instr.get("op") == "alloc":
+                    mem_region = HeapLoc(heap_cnt)
+                    out_state[name] = AliasLattice([mem_region])
+                    heap_cnt += 1
+                elif instr.get("op") == "id":
+                    rhs = instr["args"][0]
+                    out_state[name] = out_state.get(rhs, all_heap)
+                elif instr.get("op") == "ptradd":
+                    # assumes some level of constant prop/folding
+                    ptr, offset = instr["args"]
+                    if out_state.get(ptr, all_heap) == all_heap:
+                        out_state[name] = all_heap
+                    else:
+                        for memloc in out_state[name]:
+                            memloc.update_offset(constants.get(offset, ANY_OFFSET))
+                elif instr.get("op") == "load":
+                    # could be loading another pointer, assume
+                    # could point to anything
+                    out_state[instr["dest"]] = all_heap
+
+        # bookkeeping to clean up big offset chains that we could have made
+        return out_state
+    
+    # Initialize in/out sets for each block
+    in_states = {label: arg_state for label in block_labels}
+    out_states = {label: arg_state for label in block_labels}
+
+    # worklist = deque(block_labels[::-1]) 
+    worklist = deque(block_labels) 
+    # order doesn't matter, but theoretically topological order is best
+    while worklist:
+        b = worklist.pop()
+        in_states[b] = meet([out_states[pred] for pred in preds[b]])
+        # print(in_states[b], [out_states[pred] for pred in preds[b]])
+        new_out = transfer(blockmap[b], in_states[b])
+        if out_states[b] != new_out:
+            out_states[b] = new_out
+            worklist.extend(succs[b])
+
+    return meet(out_states.values())
+
+def local_dead_store_elim(block, aliases):
+    unused_stores = {}
+    for instr in block:
+        if instr.get("op") == "load": 
+            for ptr in unused_stores.keys():
+                # may be loaded from 
+                if aliases[instr["args"][0]].intersection(aliases[ptr]):
+                    unused_stores.pop(ptr)
+        if instr.get("op") == "store":
+            if instr["args"][0] in unused_stores:
+                block.remove(unused_stores[instr["args"][0]])
+            unused_stores[instr["args"][0]] = instr
+
+def may_alias(ptr1, ptr2, aliases):
+    if must_alias(ptr1, ptr2, aliases):
+        return True
+    return aliases[ptr1].intersection(aliases[ptr2])
+
+def must_alias(ptr1, ptr2, aliases):
+    if ptr1 == ptr2:
+        return True
+    if aliases[ptr1] == ALL_HEAP or aliases[ptr2] == ALL_HEAP:
+        return False
+    if any(loc.endswith(".any") for loc in aliases[ptr1]) or any(loc.endswith(".any") for loc in aliases[ptr2]):
+        return False
+    return aliases[ptr1] == aliases[ptr2]
+
+def local_store_to_load(block, state_must):
+    most_recent_stores = {}
+    for instr in block:
+        if instr.get("op") == "store":
+            most_recent_stores[instr["args"][0]] = instr
+        if instr.get("op") == "load":
+            for ptr in most_recent_stores.keys():
+                if must_alias(ptr, instr["args"][0], state_must):
+                    instr["op"] = "id"
+                    instr["args"] = [most_recent_stores[ptr]["dest"]]
+
+def local_redundant_load_elim(block, state):
+    unused_loads = {}
+    for instr in block:
+        if instr.get("op") == "store":
+            for ptr in unused_loads.keys():
+                if may_alias(ptr, instr["args"][0], state):
+                    unused_loads.pop(ptr)
+        if instr.get("op") == "load":
+            for ptr in unused_loads.keys():
+                if must_alias(ptr, instr["args"][0], state):
+                    instr["op"] = "id"
+                    instr["args"] = [unused_loads[ptr]["dest"]]
+
 def should_keep(instr, used_vars):
     if 'op' not in instr or 'dest' not in instr:
         return True
@@ -534,9 +764,26 @@ if __name__ == "__main__":
             blockmap[label] = outmap        
             
         natural_loops = find_natural_loops(block_labels, preds, succs, dominators)
-        move_invariant_code(natural_loops, block_labels, blockmap, preds)
+
+        move_invariant_code(natural_loops, block_labels, blockmap, preds, dominators)
 
         preds, succs = predss_and_successors(block_labels, blockmap)
+        dominators = compute_dominators(preds, succs, block_labels)
+        fronts = compute_frontier(succs, dominators)
+        tree = compute_tree(dominators)
+
+        state = alias_analysis(block_labels, blockmap, preds)
+
+        for label in block_labels:
+            block = blockmap[label]
+            local_dead_store_elim(block, state)
+            local_store_to_load(block, state)
+            local_redundant_load_elim(block, state)
+
+        for label in block_labels:
+            block = blockmap[label]
+            blockmap[label] = lvn(block)
+        # gvn(fn, block_labels, blockmap, dominators, tree, succs)
 
         from_ssa(blockmap)
         liveness_analysis(block_labels, blockmap, preds, succs, fn["args"] if "args" in fn else [])
@@ -555,5 +802,8 @@ if __name__ == "__main__":
                 outinst.append(inst)
         fn["instrs"] = outinst
 
-
-    json.dump(prog, sys.stdout, indent=2)
+    print("May alias")
+    print(state_may)
+    print("Must alias")
+    print(state_must)
+    # json.dump(prog, sys.stdout, indent=2)
