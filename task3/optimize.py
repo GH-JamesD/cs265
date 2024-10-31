@@ -18,11 +18,11 @@ TERMINATORS = 'br', 'jmp', 'ret'
 # phis = {}
 
 def form_blocks(instrs):
-    """Given a list of Bril instructions, generate a sequence of
-    instruction lists representing the basic blocks in the program.
+    """Given a list of Bril block, generate a sequence of
+    inst lists representing the basic blocks in the program.
 
-    Every instruction in `instr` will show up in exactly one block. Jump
-    and branch instructions may only appear at the end of a block, and
+    Every inst in `instr` will show up in exactly one block. Jump
+    and branch block may only appear at the end of a block, and
     control can transfer only to the top of a basic block---so labels
     can only appear at the *start* of a basic block. Basic blocks may
     not be empty.
@@ -33,21 +33,31 @@ def form_blocks(instrs):
     cur_block = [{"label": "entry" + str(entryct)}]
     entryct += 1
 
+    prevret = False
+
     for instr in instrs:
-        if 'op' in instr:  # It's an instruction.
+        if prevret:
+            if not "op" in instr:
+                prevret = False
+                cur_block = [instr]
+                continue
+            else:
+                continue
+        if 'op' in instr:  # It's an inst.
             if not cur_block:
                 cur_block.append({"label": "entry" + str(entryct)})
                 entryct += 1
-            # Add the instruction to the currently-being-formed block.
+            # Add the inst to the currently-being-formed block.
             cur_block.append(instr)
 
-            # If this is a terminator (branching instruction), it's the
-            # last instruction in the block. Finish this block and
+            # If this is a terminator (branching inst), it's the
+            # last inst in the block. Finish this block and
             # start a new one.
             if instr['op'] in TERMINATORS:
                 yield cur_block
+                if instr['op'] == 'ret':
+                    prevret = True
                 cur_block = []
-
         else:  # It's a label.
             # End the block here (if it contains anything).
             if cur_block:
@@ -83,7 +93,7 @@ def predss_and_successors(block_labels, blockmap):
 
     return preds, succs
 
-def reverse_postorder(succs):
+def reverse_postorder(succs, block_labels):
     visited = set()
     postorder = []
 
@@ -100,13 +110,13 @@ def reverse_postorder(succs):
 
     return postorder[::-1]
 
-def compute_dominators(preds, succs):
+def compute_dominators(preds, succs, block_labels):
     doms = defaultdict(set)
-    for name in preds.keys():
+    for name in block_labels:
         doms[name] = set(name for name in preds).union(set(name for name in succs))
         #doms[name] = set(preds.keys())
     changed = True
-    rev_post = reverse_postorder(succs)
+    rev_post = reverse_postorder(succs, block_labels)
     while changed:
         changed = False
         for i in rev_post:
@@ -236,7 +246,7 @@ def fresh_name(var):
     var_nums[var] += 1
     return out
 
-def rename_vars(args):
+def rename_vars(args, block_labels, succs, blockmap):
     stack = defaultdict(list, {arg["name"]: [arg["name"]] for arg in args})
 
     def rename_block(block):
@@ -269,7 +279,7 @@ def rename_vars(args):
         stack.clear()
         stack.update(oldstack)
 
-    first = list(succs.keys())[0]
+    first = block_labels[0]
     rename_block(first)
 
     for block, phies in phis.items():
@@ -288,10 +298,12 @@ def find_natural_loops(block_labels, preds, succs, dominators):
         for name2 in succs[name1]:
             if name2 in dominators[name1]:
                 backedges.append((name1, name2))
-
     natural_loops = []
     for (A, B) in backedges:
         loop_nodes = set((A, B))
+        if len(loop_nodes) == 1:
+            natural_loops.append((A, loop_nodes))
+            continue
         worklist = deque([A])
         while worklist:
             node = worklist.popleft()
@@ -305,11 +317,11 @@ def find_natural_loops(block_labels, preds, succs, dominators):
 
 def is_pure_deterministic(instr):
     # extra conservative, some of these can be moved with careful analysis
-    if instr["op"] in ["jmp", "br", "ret", "phi", "print", "call", "store", "load"]:
-        return False
-    if instr["op"] == "div":
-        return False
-    return True
+    '''if instr["op"] in ["jmp", "br", "ret", "phi", "print", "call", "store", "load", "div"]:
+        return False'''
+    if "op" in instr and instr["op"] == "const":
+        return True
+    return False
 
 def move_invariant_code(natural_loops, block_labels, blockmap, preds, dominators):
     pre_header_count = 1
@@ -344,7 +356,7 @@ def move_invariant_code(natural_loops, block_labels, blockmap, preds, dominators
                             invariant_vars.add(instr["dest"])
                         changed = True
     
-        # create pre-header to hold moved instructions
+        # create pre-header to hold moved block
         if any(ll for ll in lines_to_move.values()):
             pre_header_label = "preheader" + str(pre_header_count)
             pre_header_count += 1
@@ -736,6 +748,8 @@ def local_redundant_load_elim(block, state):
 def should_keep(instr, used_vars):
     if 'op' not in instr or 'dest' not in instr:
         return True
+    if instr["op"] in ["jmp", "br", "ret", "phi", "print", "call", "store", "load", "div"]:
+        return True
     return instr['dest'] in used_vars
 
 if __name__ == "__main__":
@@ -744,12 +758,43 @@ if __name__ == "__main__":
         block_labels = [b[0]["label"] for b in form_blocks(fn["instrs"])]
         blockmap = dict((b[0]["label"], b) for b in form_blocks(fn["instrs"]))
         preds, succs = predss_and_successors(block_labels, blockmap)
-        dominators = compute_dominators(preds, succs)
+        dominators = compute_dominators(preds, succs, block_labels)
         fronts = compute_frontier(succs, dominators)
         tree = compute_tree(dominators)
         vardefs = find_vars(block_labels, blockmap)
         phis = place_phi(blockmap, fronts)
-        rename_vars(fn["args"] if "args" in fn else [])
+        rename_vars(fn["args"] if "args" in fn else [], block_labels, succs, blockmap)
+        usedvars = set()
+        
+        for label in block_labels:
+            for inst in blockmap[label]:
+                args = inst.get("args", [])
+                usedvars.update(args)
+        
+        for label in block_labels:
+            outmap = []
+            for inst in blockmap[label]:
+                if should_keep(inst, usedvars):
+                    outmap.append(inst)
+            blockmap[label] = outmap 
+
+        natural_loops = find_natural_loops(block_labels, preds, succs, dominators)
+
+        move_invariant_code(natural_loops, block_labels, blockmap, preds, dominators)
+
+        move_invariant_code(natural_loops, block_labels, blockmap, preds)
+
+        preds, succs = predss_and_successors(block_labels, blockmap)
+
+        for label in block_labels:
+            block = blockmap[label]
+            blockmap[label] = lvn(block)
+
+        from_ssa(blockmap)
+        
+        constant_propagation_and_folding(block_labels, blockmap, preds, succs)
+        liveness_analysis(block_labels, blockmap, preds, succs, fn["args"] if "args" in fn else [])
+
         usedvars = set()
         for label in block_labels:
             for inst in blockmap[label]:
@@ -761,37 +806,9 @@ if __name__ == "__main__":
             for inst in blockmap[label]:
                 if should_keep(inst, usedvars):
                     outmap.append(inst)
-            blockmap[label] = outmap        
-            
-        natural_loops = find_natural_loops(block_labels, preds, succs, dominators)
-
-        move_invariant_code(natural_loops, block_labels, blockmap, preds, dominators)
-
-        preds, succs = predss_and_successors(block_labels, blockmap)
-        dominators = compute_dominators(preds, succs, block_labels)
-        fronts = compute_frontier(succs, dominators)
-        tree = compute_tree(dominators)
-
-        state = alias_analysis(block_labels, blockmap, preds)
-
-        for label in block_labels:
-            block = blockmap[label]
-            local_dead_store_elim(block, state)
-            local_store_to_load(block, state)
-            local_redundant_load_elim(block, state)
-
-        for label in block_labels:
-            block = blockmap[label]
-            blockmap[label] = lvn(block)
-        # gvn(fn, block_labels, blockmap, dominators, tree, succs)
-
-        from_ssa(blockmap)
-        liveness_analysis(block_labels, blockmap, preds, succs, fn["args"] if "args" in fn else [])
-        constant_propagation_and_folding(block_labels, blockmap, preds, succs)
-
-
-
-        #Up-to-date SSA instructions now in blockmap and blocks
+            blockmap[label] = outmap 
+        #Up-to-date SSA block now in blockmap and blocks
+        
         outinst = []
         for label in block_labels:
             block = blockmap[label]
@@ -800,6 +817,7 @@ if __name__ == "__main__":
                     if inst["dest"] == inst["args"][0]:
                         continue
                 outinst.append(inst)
+        
         fn["instrs"] = outinst
 
     print("May alias")
