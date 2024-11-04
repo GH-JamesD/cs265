@@ -1,0 +1,16 @@
+@main {
+.entry1:
+    zero1: int = const 0;
+    one1: int = const 1;
+    two1: int = add one1 one1;
+    p1: ptr<int> = alloc two1;
+    store p1 zero1;
+.entry2:
+    two2: int = load p1;
+    p2: ptr<int> = ptradd p1 one1;
+    store p2 two2;
+    one2: int = load p2;
+    two3: int = load p1;
+    print two3;
+    free p1;
+}

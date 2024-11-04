@@ -6,6 +6,7 @@ from utils import *
 from collections import defaultdict, OrderedDict, deque
 
 TERMINATORS = 'br', 'jmp', 'ret'
+ALL_HEAP = AliasLattice("ALL_HEAP")
 
 # blocks = []
 # blockmap = {}
@@ -527,7 +528,6 @@ def lvn(block, val2num = None, num2val = None, var2num = None, num2var = None):
     if num2var is None:
         num2var = {}
     counter = len(val2num) # TODO: different dominator tree children could have overlapping value numbers, is that ok?
-    # counter = 0
 
     for inst in block:
         if "dest" not in inst:
@@ -633,18 +633,39 @@ def returns_ptr(instr):
     # account for both type="ptr" and type={"ptr", <Type>}
     return "ptr" in instr.get("type", "")
 
-def alias_analysis(block_labels, blockmap, preds, arg_state=AliasLattice()):
+def fwd_worklist(meet, transfer, in_sets, out_sets, worklist, preds, succs):
+    while worklist:
+        b = worklist.pop()
+        in_sets[b] = meet([out_sets[pred] for pred in preds[b]])
+        new_out = transfer(blockmap[b], in_sets[b])
+
+        if out_sets[b] != new_out:
+            out_sets[b] = new_out
+            worklist.extend(succs[b])
+    return in_sets, out_sets
+
+def rev_worklist(meet, transfer, in_sets, out_sets, worklist, preds, succs):
+    while worklist:
+        b = worklist.pop()
+        out_sets[b] = meet([in_sets[succ] for succ in succs[b]])
+        new_in = transfer(blockmap[b], out_sets[b])
+
+        if in_sets[b] != new_in:
+            in_sets[b] = new_in
+            worklist.extend(preds[b])
+    return in_sets, out_sets
+
+
+def alias_analysis(block_labels, blockmap, preds, arg_state={}):
     constants = {inst["dest"]: inst["value"] for block in blockmap.values() for inst in block if inst.get("op") == "const"}
 
     heap_cnt = 1
-    all_heap = AliasLattice("ALL_HEAP")
 
     def meet(states):
-        out_states = {}
-        print('states', set(tuple(s.keys()) for s in states))
-        for v in set(tuple(s.keys()) for s in states):
-            out_states[v] = AliasLattice.union(*[s.get(v, AliasLattice()) for s in states])
-        return out_states
+        out_state = {}
+        for v in set(k for s in states for k in s.keys()):
+            out_state[v] = AliasLattice.union(*[s.get(v, AliasLattice()) for s in states])
+        return out_state
 
     def transfer(block, in_state):
         nonlocal heap_cnt
@@ -652,26 +673,27 @@ def alias_analysis(block_labels, blockmap, preds, arg_state=AliasLattice()):
         out_state = in_state.copy()
         for instr in block:
             if returns_ptr(instr):
-                name = instr.get("dest")
+                ptrname = instr.get("dest")
                 if instr.get("op") == "alloc":
                     mem_region = HeapLoc(heap_cnt)
-                    out_state[name] = AliasLattice([mem_region])
+                    out_state[ptrname] = AliasLattice([mem_region])
                     heap_cnt += 1
                 elif instr.get("op") == "id":
                     rhs = instr["args"][0]
-                    out_state[name] = out_state.get(rhs, all_heap)
+                    out_state[ptrname] = out_state.get(rhs, ALL_HEAP)
                 elif instr.get("op") == "ptradd":
                     # assumes some level of constant prop/folding
                     ptr, offset = instr["args"]
-                    if out_state.get(ptr, all_heap) == all_heap:
-                        out_state[name] = all_heap
+                    if out_state.get(ptr, ALL_HEAP) == ALL_HEAP:
+                        out_state[ptrname] = ALL_HEAP
                     else:
-                        for memloc in out_state[name]:
+                        out_state[ptrname] = out_state[ptr].copy()
+                        for memloc in out_state[ptrname]:
                             memloc.update_offset(constants.get(offset, ANY_OFFSET))
                 elif instr.get("op") == "load":
                     # could be loading another pointer, assume
                     # could point to anything
-                    out_state[instr["dest"]] = all_heap
+                    out_state[ptrname] = ALL_HEAP
 
         # bookkeeping to clean up big offset chains that we could have made
         return out_state
@@ -680,46 +702,90 @@ def alias_analysis(block_labels, blockmap, preds, arg_state=AliasLattice()):
     in_states = {label: arg_state for label in block_labels}
     out_states = {label: arg_state for label in block_labels}
 
-    # worklist = deque(block_labels[::-1]) 
+    # order shouldn't affect correctness, but theoretically topological order is faster
     worklist = deque(block_labels) 
-    # order doesn't matter, but theoretically topological order is best
-    while worklist:
-        b = worklist.pop()
-        in_states[b] = meet([out_states[pred] for pred in preds[b]])
-        # print(in_states[b], [out_states[pred] for pred in preds[b]])
-        new_out = transfer(blockmap[b], in_states[b])
-        if out_states[b] != new_out:
-            out_states[b] = new_out
-            worklist.extend(succs[b])
-
+    in_states, out_states = fwd_worklist(meet, transfer, in_states, out_states, worklist, preds, succs)
+    
     return meet(out_states.values())
+
+
+# def dead_store_elim(aliases):
+#     def meet(states):
+#         out_states = {}
+#         for v in set(k for s in states for k in s.keys()):
+#             out_states[v] = AliasLattice.union(*[s.get(v, AliasLattice()) for s in states])
+#         return out_states
+    
+#     def transfer(block, in_state):
+#         out_state = in_state.copy()
+#         for instr in block:
+#             if instr.get("op") == "load": 
+#                 this_ptr = instr["args"][0]
+#                 for other_ptr in list(out_state.keys()):
+#                     if aliases[this_ptr].may_alias(aliases[other_ptr]):
+#                         out_state.pop(other_ptr) # now used
+#         if instr.get("op") == "store":
+#             this_ptr = instr["args"][0]
+#             # TODO: should we clobber dead stores here?
+#             out_state[this_ptr] = instr 
+#         return out_state
+    
+#     in_states = {label: {} for label in block_labels}
+#     out_states = {label: {} for label in block_labels}
+#     worklist = deque(block_labels)
+#     in_states, out_states = rev_worklist(meet, transfer, in_states, out_states, worklist, preds, succs)
+
+#     for label in block_labels:
+#         block = blockmap[label]
+#         instr_del = []
+#         unused_stores = set()
+#         for i, instr in enumerate(block):
+#             if instr.get("op") == "load": 
+#                 this_ptr = instr["args"][0]
+#                 for unused_ptr in list(unused_stores.keys()):
+#                     if aliases[this_ptr].may_alias(aliases[unused_ptr]):
+#                         unused_stores.pop(unused_ptr) # now used
+#             if instr.get("op") == "store":
+#                 if instr["args"][0] in unused_stores:
+#                     instr_del.append(i)
+#                 unused_stores[instr["args"][0]] = instr
+                
+#             if "dest" not in instr:
+#                 kept.append(instr)
+#             if "dest" in instr and (instr["dest"] in out_sets[i] or instr["dest"] in used):
+#                 kept.append(instr)
+#             used.update(instr.get("args", []))
+#         blocks[i] = kept[::-1]
+    
+
 
 def local_dead_store_elim(block, aliases):
     unused_stores = {}
-    for instr in block:
+    instr_del = []
+    for i, instr in enumerate(block):
         if instr.get("op") == "load": 
-            for ptr in unused_stores.keys():
-                # may be loaded from 
-                if aliases[instr["args"][0]].intersection(aliases[ptr]):
-                    unused_stores.pop(ptr)
+            this_ptr = instr["args"][0]
+            for unused_ptr in list(unused_stores.keys()):
+                if aliases[this_ptr].may_alias(aliases[unused_ptr]):
+                    unused_stores.pop(unused_ptr) # now used
         if instr.get("op") == "store":
-            if instr["args"][0] in unused_stores:
-                block.remove(unused_stores[instr["args"][0]])
+            this_ptr = instr["args"][0]
+            if any(aliases[this_ptr].must_alias(aliases[other_ptr]) for other_ptr in unused_stores):
+                instr_del.append(i)
             unused_stores[instr["args"][0]] = instr
+
+    for i in reversed(instr_del):
+        block.pop(i)
 
 def may_alias(ptr1, ptr2, aliases):
     if must_alias(ptr1, ptr2, aliases):
         return True
-    return aliases[ptr1].intersection(aliases[ptr2])
+    return aliases[ptr1].may_alias(aliases[ptr2])
 
 def must_alias(ptr1, ptr2, aliases):
     if ptr1 == ptr2:
         return True
-    if aliases[ptr1] == ALL_HEAP or aliases[ptr2] == ALL_HEAP:
-        return False
-    if any(loc.endswith(".any") for loc in aliases[ptr1]) or any(loc.endswith(".any") for loc in aliases[ptr2]):
-        return False
-    return aliases[ptr1] == aliases[ptr2]
+    return aliases[ptr1].must_alias(aliases[ptr2])
 
 def local_store_to_load(block, state_must):
     most_recent_stores = {}
@@ -730,7 +796,8 @@ def local_store_to_load(block, state_must):
             for ptr in most_recent_stores.keys():
                 if must_alias(ptr, instr["args"][0], state_must):
                     instr["op"] = "id"
-                    instr["args"] = [most_recent_stores[ptr]["dest"]]
+                    instr["args"] = [most_recent_stores[ptr]["args"][1]]
+                    break
 
 def local_redundant_load_elim(block, state):
     unused_loads = {}
@@ -778,13 +845,26 @@ if __name__ == "__main__":
                     outmap.append(inst)
             blockmap[label] = outmap 
 
-        natural_loops = find_natural_loops(block_labels, preds, succs, dominators)
+        # TODO: copy prop of some kind
+        states = alias_analysis(block_labels, blockmap, preds)
 
-        move_invariant_code(natural_loops, block_labels, blockmap, preds, dominators)
+        changed = True
+        while changed:
+            changed = False
+            for label in block_labels:
+                block = blockmap[label]
+                old_block = block.copy()
+                local_dead_store_elim(block, states)
+                local_store_to_load(block, states)
+                local_redundant_load_elim(block, states)
+                if block != old_block:
+                    changed = True
 
-        move_invariant_code(natural_loops, block_labels, blockmap, preds)
+        # natural_loops = find_natural_loops(block_labels, preds, succs, dominators)
 
-        preds, succs = predss_and_successors(block_labels, blockmap)
+        # move_invariant_code(natural_loops, block_labels, blockmap, preds, dominators)
+
+        # preds, succs = predss_and_successors(block_labels, blockmap)
 
         for label in block_labels:
             block = blockmap[label]
@@ -820,8 +900,5 @@ if __name__ == "__main__":
         
         fn["instrs"] = outinst
 
-    print("May alias")
-    print(state_may)
-    print("Must alias")
-    print(state_must)
-    # json.dump(prog, sys.stdout, indent=2)
+    # print(states)
+    json.dump(prog, sys.stdout, indent=2)

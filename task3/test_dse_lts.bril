@@ -1,0 +1,24 @@
+@main {
+    ten: int = const 10;
+    p1: ptr<int> = alloc ten;
+    p2: ptr<int> = alloc ten;
+    one: int = const 1;
+    zero: int = const 0;
+    store p1 zero;
+    x1: int = load p1;
+    store p2 one;
+    store p1 one; 
+    x2: int = load p2;
+    p3: ptr<int> = id p1;
+    # p3: ptr<int> = ptradd p1 x1;
+    y1: int = load p1;
+    two: int = add x1 x2;
+    store p3 two;
+    print x1;
+    print x2;
+    print y1;
+    z1: int = load p3;
+    print z1;
+    free p1;
+    free p2;
+}
