@@ -2,7 +2,9 @@
 # benchmarks = '../../bril/benchmarks/**/*.bril'
 benchmarks = '../../bril/benchmarks/mem/*.bril'
 # how to extract the performance metric from stderr
-extract = 'total_dyn_inst: (\d+)'
+# extract = 'total_dyn_inst: (\d+)'
+# extract = 'total_dyn_inst: (\d+), total_loads: \d+, total_stores: \d+'
+extract = 'total_dyn_inst: (\d+), total_loads: (\d+), total_stores: (\d+)'
 
 [runs.baseline]
 pipeline = [
@@ -17,12 +19,12 @@ pipeline = [
   "brili -p {args}",
 ]
 
-[runs.licm-optimized]
-pipeline = [
-  "bril2json",
-  "python3 optimize-no-mem.py",
-  "brili -p {args}",
-]
+# [runs.licm-optimized]
+# pipeline = [
+#   "bril2json",
+#   "python3 optimize-no-mem.py",
+#   "brili -p {args}",
+# ]
 
 [runs.mem-optimized]
 pipeline = [
