@@ -12,7 +12,8 @@ def get_call_graph(prog):
         for inst in fn["instrs"]:
             if "op" in inst and inst["op"] == "call":
                 for func in inst["funcs"]:
-                    call_graph[fn["name"]].add(func)
+                    if func != fn["name"]:
+                        call_graph[fn["name"]].add(func)
     return nx.DiGraph(call_graph)
 
 
