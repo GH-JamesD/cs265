@@ -21,7 +21,8 @@ if __name__ == "__main__":
     prog = json.load(sys.stdin)
     call_graph = get_call_graph(prog)
     inlining_tree = build_inlining_tree(call_graph)
-    print_counts(inlining_tree)
+    #print_counts(inlining_tree)
+    plot_inlining_tree(inlining_tree)
 
 
 
