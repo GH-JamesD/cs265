@@ -25,7 +25,7 @@ def build_inlining_tree(CG, edgelist=None):
         return InliningTreeLeaf(edgelist)
 
     if len(list(nx.weakly_connected_components(CG))) > 1:
-        return build_inlining_tree_from_components(CG)
+        return build_inlining_tree_from_components(CG, edgelist)
 
     p_edge = choose_part(CG)
 
