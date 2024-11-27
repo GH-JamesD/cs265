@@ -207,3 +207,9 @@ def plot_inlining_tree(tree):
     nx.draw(graph, pos, with_labels=True, node_size=3000, node_color="lightblue", font_size=8, font_weight="bold", arrowsize=15)
     plt.title("Inlining Tree Visualization")
     plt.savefig("inlining_tree.png")
+    plt.close()
+
+def plot_call_graph(CG):
+    nx.draw(CG, with_labels=True)
+    plt.savefig("call_graph.png")
+    plt.close()

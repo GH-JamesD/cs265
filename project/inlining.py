@@ -6,22 +6,27 @@ import networkx as nx
 from inlining_tree import *
 from collections import defaultdict, OrderedDict, deque
 
-def get_call_graph(prog):
+def get_call_graph(prog, ignore_recursive = True):
     call_graph = defaultdict(set)
     for fn in prog["functions"]:
         for inst in fn["instrs"]:
             if "op" in inst and inst["op"] == "call":
                 for func in inst["funcs"]:
-                    if func != fn["name"]:
+                    # For now, we ignore recursive calls
+                    if ignore_recursive and func == fn["name"]:
+                        continue
+                    else:
                         call_graph[fn["name"]].add(func)
     return nx.DiGraph(call_graph)
+
+
 
 
 if __name__ == "__main__":
     prog = json.load(sys.stdin)
     call_graph = get_call_graph(prog)
+    plot_call_graph(call_graph)
     inlining_tree = build_inlining_tree(call_graph)
-    #print_counts(inlining_tree)
     plot_inlining_tree(inlining_tree)
 
 
