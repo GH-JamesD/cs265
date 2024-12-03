@@ -4,6 +4,7 @@ import random
 import string
 import networkx as nx
 from inlining_tree import *
+from helpers import fresh_name
 from collections import defaultdict, OrderedDict, deque
 import os
 import subprocess
@@ -46,8 +47,62 @@ def evaluate_inlining_tree(tree, prog):
     evaluate(tree)
 
 def implement_inlining(inlined_edges, prog):
-    # TODO: Implement inlining
-    return prog
+    fns = dict((fn["name"], fn) for fn in prog["functions"])
+    # TODO: order the edges smartly so that this can be done in a single pass
+    for caller_name, callee_name in inlined_edges:
+        new_instrs = []
+        for caller_line in fns[caller_name]["instrs"]:
+            if (caller_line.get("op") == "call") and (callee_name == caller_line["funcs"][0]):
+                # inline this function
+                retval_name = caller_line.get("dest", None)
+                phi_labels = [] # for final phi instruction
+                phi_vars = []   # for final phi instruction
+                end_label = f"end_{fresh_name(callee_name)}" # jump point to return to after inlined fn returns
+                old_to_new = {} # since code is in SSA form, a single map of old var names to new var names is enough
+                old_to_new["__undefined"] = "__undefined"
+                # replace function arguments
+                for arg, param in zip(caller_line["args"], fns[callee_name]["args"]):
+                    pname  = param["name"] # param has name and type fields
+                    old_to_new[pname] = arg
+                # rename labels and var defs at the beginning
+                for cl in fns[callee_name]["instrs"]:
+                    if "label" in cl: # rename label
+                        curr_label = fresh_name(cl["label"])
+                        old_to_new[cl["label"]] = curr_label
+                    if "dest" in cl: # var defn
+                        curr_dest = fresh_name(cl["dest"])
+                        old_to_new[cl["dest"]] = curr_dest
+                for callee_line in fns[callee_name]["instrs"]:
+                    if "label" in callee_line:
+                        curr_label = old_to_new[callee_line["label"]]
+                        new_instrs.append({"label": curr_label})
+                    elif callee_line["op"] == "ret":
+                        # assumes well-formed fn: either all ret have a value or none do
+                        if retval_name is not None:
+                            # assumes no unlabeled blocks - our SSA fn guarantees this
+                            phi_labels.append(curr_label)
+                            phi_vars.append(old_to_new[callee_line["args"][0]])
+                        new_instrs.append({"op": "jmp", "labels": [end_label]})
+                    else:
+                        new_line = dict(callee_line)
+                        if "dest" in new_line:
+                            new_line["dest"] = old_to_new[callee_line["dest"]]
+                        # assumes no name collisions between vars and labels
+                        if "args" in new_line:
+                            new_line["args"] = [old_to_new[var] for var in new_line["args"]]
+                        if "labels" in new_line:
+                            new_line["labels"] = [old_to_new[var] for var in new_line["labels"]]
+                        new_instrs.append(new_line)
+                new_instrs.append({"label": end_label})
+                if retval_name is not None:
+                    new_instrs.append({"op": "phi", "dest": retval_name, "labels": phi_labels, "args": phi_vars})
+            else:
+                # no inlining on this instr
+                new_instrs.append(caller_line)
+        # replace the old instrs with the new instrs
+        fns[caller_name]["instrs"] = new_instrs
+    new_prog = {"functions": list(fns.values())}
+    return new_prog
 
 
 def implement_compile_measure(inlined_edges, prog):
@@ -81,17 +136,20 @@ def implement_compile_measure(inlined_edges, prog):
 
 if __name__ == "__main__":
     prog = json.load(sys.stdin)
-    bin_size = implement_compile_measure([], prog)
-    print(bin_size)
-    #call_graph = get_call_graph(prog)
-    #plot_call_graph(call_graph)
-    #inlining_tree = build_inlining_tree(call_graph)
-    #plot_inlining_tree(inlining_tree)
+    # bin_size = implement_compile_measure([], prog)
+    # print(bin_size)
+    call_graph = get_call_graph(prog)
+    plot_call_graph(call_graph)
+    # inlining_tree = build_inlining_tree(call_graph)
+    # plot_inlining_tree(inlining_tree)
 
+    # simple test, inline everything
+    inlined_edges = call_graph.edges
+    prog = implement_inlining(inlined_edges, prog)
 
 
     #for fn in prog["functions"]:
 
 
     # print(states)
-    #json.dump(prog, sys.stdout, indent=2)
+    json.dump(prog, sys.stdout, indent=2)
