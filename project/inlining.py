@@ -140,11 +140,12 @@ if __name__ == "__main__":
     # print(bin_size)
     call_graph = get_call_graph(prog)
     plot_call_graph(call_graph)
-    # inlining_tree = build_inlining_tree(call_graph)
-    # plot_inlining_tree(inlining_tree)
+    inlining_tree = build_inlining_tree(call_graph)
+    plot_inlining_tree(inlining_tree)
 
     # simple test, inline everything
-    inlined_edges = call_graph.edges
+    # inlined_edges = call_graph.edges
+    inlined_edges = inlining_tree.inlined_edges
     prog = implement_inlining(inlined_edges, prog)
 
 
