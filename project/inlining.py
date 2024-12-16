@@ -45,6 +45,7 @@ def evaluate_inlining_tree(tree, prog):
             for component in tree.components:
                 evaluate(component)
     evaluate(tree)
+    return result_map
 
 def implement_inlining(inlined_edges, prog):
     fns = dict((fn["name"], fn) for fn in prog["functions"])
@@ -56,7 +57,6 @@ def implement_inlining(inlined_edges, prog):
     inlined_edges = sorted(
     inlined_edges, key=lambda edge: (node_position[edge[0]], node_position[edge[1]]),
     )
-    print(inlined_edges)
     for caller_name, callee_name in inlined_edges:
         new_instrs = []
         for caller_line in fns[caller_name]["instrs"]:
@@ -122,7 +122,7 @@ def implement_compile_measure(inlined_edges, prog):
 
     try:
         brilift_output = "bril.o"
-        subprocess.run(f"brilift -o bril.o -O none < {temp_json_file}", shell=True, check=True)
+        subprocess.run(f"python ../../bril/examples/from_ssa.py < {temp_json_file} | brilift -o bril.o -O speed", shell=True, check=True)
 
         rt_location = "../../bril/brilift/rt.o"
 
@@ -150,8 +150,8 @@ if __name__ == "__main__":
     plot_call_graph(call_graph)
     inlining_tree = build_inlining_tree(call_graph)
     #plot_inlining_tree(inlining_tree)
-    evaluate_inlining_tree(inlining_tree, prog)
-
+    result_map  = evaluate_inlining_tree(inlining_tree, prog)
+    print(result_map)
     #for fn in prog["functions"]:
 
 
