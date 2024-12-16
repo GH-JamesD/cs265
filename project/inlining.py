@@ -48,7 +48,15 @@ def evaluate_inlining_tree(tree, prog):
 
 def implement_inlining(inlined_edges, prog):
     fns = dict((fn["name"], fn) for fn in prog["functions"])
-    # TODO: order the edges smartly so that this can be done in a single pass
+    G = nx.DiGraph()
+    G.add_edges_from(inlined_edges)
+
+    rev_topo = list(nx.topological_sort(G.reverse()))
+    node_position = {node: i for i, node in enumerate(rev_topo)}
+    inlined_edges = sorted(
+    inlined_edges, key=lambda edge: (node_position[edge[0]], node_position[edge[1]]),
+    )
+    print(inlined_edges)
     for caller_name, callee_name in inlined_edges:
         new_instrs = []
         for caller_line in fns[caller_name]["instrs"]:
@@ -141,16 +149,11 @@ if __name__ == "__main__":
     call_graph = get_call_graph(prog)
     plot_call_graph(call_graph)
     inlining_tree = build_inlining_tree(call_graph)
-    plot_inlining_tree(inlining_tree)
-
-    # simple test, inline everything
-    # inlined_edges = call_graph.edges
-    inlined_edges = inlining_tree.inlined_edges
-    prog = implement_inlining(inlined_edges, prog)
-
+    #plot_inlining_tree(inlining_tree)
+    evaluate_inlining_tree(inlining_tree, prog)
 
     #for fn in prog["functions"]:
 
 
     # print(states)
-    json.dump(prog, sys.stdout, indent=2)
+    #json.dump(prog, sys.stdout, indent=2)

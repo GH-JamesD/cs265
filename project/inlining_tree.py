@@ -83,9 +83,6 @@ def contract(CG, edge):
     for pred in CG.predecessors(u):
         if pred != v:
             contracted_graph.add_edge(pred, new_node_name)
-    for pred in CG.predecessors(v):
-        if pred != u:
-            contracted_graph.add_edge(pred, new_node_name)
     for succ in CG.successors(u):
         if succ != v:
             contracted_graph.add_edge(new_node_name, succ)
@@ -93,7 +90,7 @@ def contract(CG, edge):
         if succ != u:
             contracted_graph.add_edge(new_node_name, succ)
     
-    contracted_graph.remove_nodes_from([u, v])
+    contracted_graph.remove_node(u)
     
     return contracted_graph
 
