@@ -49,14 +49,7 @@ def evaluate_inlining_tree(tree, prog):
 
 def implement_inlining(inlined_edges, prog):
     fns = dict((fn["name"], fn) for fn in prog["functions"])
-    G = nx.DiGraph()
-    G.add_edges_from(inlined_edges)
 
-    rev_topo = list(nx.topological_sort(G.reverse()))
-    node_position = {node: i for i, node in enumerate(rev_topo)}
-    inlined_edges = sorted(
-    inlined_edges, key=lambda edge: (node_position[edge[0]], node_position[edge[1]]),
-    )
     for caller_name, callee_name in inlined_edges:
         new_instrs = []
         for caller_line in fns[caller_name]["instrs"]:
