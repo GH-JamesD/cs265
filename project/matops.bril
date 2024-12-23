@@ -1,0 +1,938 @@
+@printarray(size: int, arr: ptr<float>) {
+  i: int = const 0;
+  one: int = const 1;
+  .loop:
+  cond: bool = lt i size;
+  br cond .body .done;
+  .body:
+  loc: ptr<float> = ptradd arr i;
+  val: float = load loc;
+  print val;
+  .loop_end:
+  i: int = add i one;
+  jmp .loop;
+  .done:
+  ret;
+}
+
+@identitymatrix(size: int, dest: ptr<float>) {
+  onei: float = const 1.0;
+  one: int = const 1;
+  zero: float = const 0.0;
+  i: int = const 0;
+
+  .row.loop:
+  cond: bool = lt i size;
+  br cond .row.body .row.done;
+
+  .row.body:
+  j: int = const 0;
+
+  .col.loop:
+  cond: bool = lt j size;
+  br cond .col.body .col.done;
+
+  .col.body:
+  row_start: int = mul i size;
+  dest_idx: int = add row_start j;
+
+  is_diag: bool = eq i j;
+  br is_diag .set.one .set.zero;
+
+  .set.one:
+  val: float = id onei;
+  jmp .store;
+
+  .set.zero:
+  val: float = id zero;
+  jmp .store;
+
+  .store:
+  dest_ptr: ptr<float> = ptradd dest dest_idx;
+  store dest_ptr val;
+
+  j: int = add j one;
+  jmp .col.loop;
+
+  .col.done:
+  i: int = add i one;
+  jmp .row.loop;
+
+  .row.done:
+  ret;
+}
+
+@zeromatrix(rows: int, cols: int, dest: ptr<float>) {
+  zero: float = const 0.0;
+  i: int = const 0;
+  one: int = const 1;
+
+  .row.loop:
+  cond: bool = lt i rows;
+  br cond .row.body .row.done;
+
+  .row.body:
+  j: int = const 0;
+
+  .col.loop:
+  cond: bool = lt j cols;
+  br cond .col.body .col.done;
+
+  .col.body:
+  row_start: int = mul i cols;
+  dest_idx: int = add row_start j;
+
+  dest_ptr: ptr<float> = ptradd dest dest_idx;
+  store dest_ptr zero;
+
+  j: int = add j one;
+  jmp .col.loop;
+
+  .col.done:
+  i: int = add i one;
+  jmp .row.loop;
+
+  .row.done:
+  ret;
+}
+
+@diagonalmatrix(size: int, diag: ptr<float>, dest: ptr<float>) {
+  zero: float = const 0.0;
+  one: int = const 1;
+  i: int = const 0;
+
+  .row.loop:
+  cond: bool = lt i size;
+  br cond .row.body .row.done;
+
+  .row.body:
+  j: int = const 0;
+
+  .col.loop:
+  cond: bool = lt j size;
+  br cond .col.body .col.done;
+
+  .col.body:
+  row_start: int = mul i size;
+  dest_idx: int = add row_start j;
+
+  is_diag: bool = eq i j;
+  br is_diag .set.diag .set.zero;
+
+  .set.diag:
+  diag_ptr: ptr<float> = ptradd diag i;
+  val: float = load diag_ptr;
+  jmp .store;
+
+  .set.zero:
+  val: float = id zero;
+  jmp .store;
+
+  .store:
+  dest_ptr: ptr<float> = ptradd dest dest_idx;
+  store dest_ptr val;
+
+  j: int = add j one;
+  jmp .col.loop;
+
+  .col.done:
+  i: int = add i one;
+  jmp .row.loop;
+
+  .row.done:
+  ret;
+}
+
+@dot(size: int, v: ptr<float>, u: ptr<float>): float {
+  zero: float = const 0.0;
+  i: int = const 0;
+  one: int = const 1;
+  acc: float = id zero;
+
+  .loop:
+  cond: bool = lt i size;
+  br cond .body .done;
+
+  .body:
+  v_ptr: ptr<float> = ptradd v i;
+  v_val: float = load v_ptr;
+
+  u_ptr: ptr<float> = ptradd u i;
+  u_val: float = load u_ptr;
+
+  prod: float = fmul v_val u_val;
+
+  acc: float = fadd acc prod;
+
+  i: int = add i one;
+  jmp .loop;
+
+  .done:
+
+  ret acc;
+}
+
+@vectornorm(size: int, v: ptr<float>): float {
+  zero: float = const 0.0;
+  i: int = const 0;
+  one = const 1;
+  acc: float = id zero;
+
+  .loop:
+  cond: bool = lt i size;
+  br cond .body .done;
+
+  .body:
+  v_ptr: ptr<float> = ptradd v i;
+  v_val: float = load v_ptr;
+
+  square: float = fmul v_val v_val;
+
+  acc: float = fadd acc square;
+
+  i: int = add i one;
+  jmp .loop;
+
+  .done:
+
+  result: float = call @fsqrt acc;
+  ret result;
+}
+
+@normalize_vector(size: int, vec: ptr<float>) {
+  sum: float = const 0.0;
+  i: int = const 0;
+  one: int = const 1;
+  
+
+  norm: float = call @vectornorm size vec;
+  
+  i: int = const 0;
+  .normalize_elements:
+  cond: bool = lt i size;
+  br cond .normalize_body .normalize_done;
+  
+  .normalize_body:
+  vloc: ptr<float> = ptradd vec i;
+  val: float = load vloc;
+  normed_val: float = fdiv val norm;
+  store vloc normed_val;
+  i: int = add i one;
+  jmp .normalize_elements;
+  
+  .normalize_done:
+  ret;
+}
+
+@fsqrt(num: float) : float {
+  zero: float = const 0.0;
+  two: float = const 2.0;
+  is_zero: bool = feq num zero;
+  br is_zero .return_zero .guess;
+
+  .return_zero:
+  ret zero;
+
+  .guess:
+
+  guess: float = fdiv num two;
+  epsilon: float = const 0.0001;
+
+  .loop:
+  divisor: float = fdiv num guess;
+  sum: float = fadd guess divisor;
+  next_guess: float = fdiv sum two;
+
+  diff: float = fsub guess next_guess;
+  abs_diff: float = call @fabs diff;
+  converged: bool = fle abs_diff epsilon;
+  br converged .done .next_iteration;
+  .next_iteration:
+
+  guess: float = id next_guess;
+  jmp .loop;
+
+  .done:
+  ret guess;
+}
+
+@fabs(val: float) : float {
+  zero: float = const 0.0;
+  is_negative: bool = flt val zero;
+  br is_negative .negate .positive;
+
+  .negate:
+  negated: float = fsub zero val;
+  ret negated;
+
+  .positive:
+  ret val;
+}
+
+@mod(x: int, m: int): int {
+    one: int = const 1;
+    q: int = div x m;
+    multiple: int = mul q m;
+    r: int = sub x multiple;
+    ret r;
+}
+
+@matmul(rows1: int, cols1: int, rows2: int, cols2: int, arr1: ptr<float>, arr2: ptr<float>, dest: ptr<float>) {
+  one: int = const 1;
+  row: int = const 0;
+  .row.loop:
+  cond: bool = lt row rows1;
+  br cond .row.body .row.done;
+  .row.body:
+  col: int = const 0;
+  .col.loop:
+  cond: bool = lt col cols2;
+  br cond .col.body .col.done;
+  .col.body:
+  sum: float = const 0.0;
+  i: int = const 0;
+  .sum.loop:
+  cond: bool = lt i cols1;
+  br cond .sum.body .sum.done;
+  .sum.body:
+  lidx: int = mul row cols1;
+  lidx: int = add lidx i;
+  ridx: int = mul i cols2;
+  ridx: int = add ridx col;
+  lvalloc: ptr<float> = ptradd arr1 lidx;
+  lval: float = load lvalloc;
+  rvalloc: ptr<float> = ptradd arr2 ridx;
+  rval: float = load rvalloc;
+  prod: float = fmul lval rval;
+  sum: float = fadd sum prod;
+  .sum.loop_end:
+  i: int = add i one;
+  jmp .sum.loop;
+  .sum.done:
+  idx: int = mul row cols2;
+  idx: int = add idx col;
+  loc: ptr<float> = ptradd dest idx;
+  store loc sum;
+  .col.loop_end:
+  col: int = add col one;
+  jmp .col.loop;
+  .col.done:
+  .row.loop_end:
+  row: int = add row one;
+  jmp .row.loop;
+  .row.done:
+  ret;
+}
+
+@matadd(rows: int, cols: int, arr1: ptr<float>, arr2: ptr<float>, dest: ptr<float>) {
+  one: int = const 1;
+  row: int = const 0;
+  .row.loop:
+  cond: bool = lt row rows;
+  br cond .row.body .row.done;
+  .row.body:
+  col: int = const 0;
+  .col.loop:
+  cond: bool = lt col cols;
+  br cond .col.body .col.done;
+  .col.body:
+  lidx: int = mul row cols;
+  lidx: int = add lidx col;
+  ridx: int = mul row cols;
+  ridx: int = add ridx col;
+  lvalloc: ptr<float> = ptradd arr1 lidx;
+  lval: float = load lvalloc;
+  rvalloc: ptr<float> = ptradd arr2 ridx;
+  rval: float = load rvalloc;
+  sum: float = fadd lval rval;
+  idx: int = mul row cols;
+  idx: int = add idx col;
+  loc: ptr<float> = ptradd dest idx;
+  store loc sum;
+  .col.loop_end:
+  col: int = add col one;
+  jmp .col.loop;
+  .col.done:
+  .row.loop_end:
+  row: int = add row one;
+  jmp .row.loop;
+  .row.done:
+  ret;
+}
+
+@matsub(rows: int, cols: int, arr1: ptr<float>, arr2: ptr<float>, dest: ptr<float>) {
+  one: int = const 1;
+  row: int = const 0;
+  .row.loop:
+  cond: bool = lt row rows;
+  br cond .row.body .row.done;
+  .row.body:
+  col: int = const 0;
+  .col.loop:
+  cond: bool = lt col cols;
+  br cond .col.body .col.done;
+  .col.body:
+  lidx: int = mul row cols;
+  lidx: int = add lidx col;
+  ridx: int = mul row cols;
+  ridx: int = add ridx col;
+  lvalloc: ptr<float> = ptradd arr1 lidx;
+  lval: float = load lvalloc;
+  rvalloc: ptr<float> = ptradd arr2 ridx;
+  rval: float = load rvalloc;
+  diff: float = fsub lval rval;
+  idx: int = mul row cols;
+  idx: int = add idx col;
+  loc: ptr<float> = ptradd dest idx;
+  store loc diff;
+  .col.loop_end:
+  col: int = add col one;
+  jmp .col.loop;
+  .col.done:
+  .row.loop_end:
+  row: int = add row one;
+  jmp .row.loop;
+  .row.done:
+  ret;
+}
+
+@scalarmul(rows: int, cols: int, scalar: float, arr: ptr<float>, dest: ptr<float>) {
+  one: int = const 1;
+  row: int = const 0;
+  .row.loop:
+  cond: bool = lt row rows;
+  br cond .row.body .row.done;
+  .row.body:
+  col: int = const 0;
+  .col.loop:
+  cond: bool = lt col cols;
+  br cond .col.body .col.done;
+  .col.body:
+  lidx: int = mul row cols;
+  lidx: int = add lidx col;
+  lvalloc: ptr<float> = ptradd arr lidx;
+  lval: float = load lvalloc;
+  prod: float = fmul scalar lval;
+  idx: int = mul row cols;
+  idx: int = add idx col;
+  loc: ptr<float> = ptradd dest idx;
+  store loc prod;
+  .col.loop_end:
+  col: int = add col one;
+  jmp .col.loop;
+  .col.done:
+  .row.loop_end:
+  row: int = add row one;
+  jmp .row.loop;
+  .row.done:
+  ret;
+}
+
+@mattranspose(rows: int, cols: int, arr: ptr<float>, dest: ptr<float>) {
+  one: int = const 1;
+  row: int = const 0;
+
+  .row.loop:
+  cond: bool = lt row rows;
+  br cond .row.body .row.done;
+
+  .row.body:
+  col: int = const 0;
+
+  .col.loop:
+  cond: bool = lt col cols;
+  br cond .col.body .col.done;
+
+  .col.body:
+
+  src_idx_row: int = mul row cols;
+  src_idx: int = add src_idx_row col;
+
+  dest_idx_col: int = mul col rows;
+  dest_idx: int = add dest_idx_col row;
+
+  src_ptr: ptr<float> = ptradd arr src_idx;
+  val: float = load src_ptr;
+
+  dest_ptr: ptr<float> = ptradd dest dest_idx;
+  store dest_ptr val;
+
+  col: int = add col one;
+  jmp .col.loop;
+
+  .col.done:
+  row: int = add row one;
+  jmp .row.loop;
+
+  .row.done:
+  ret;
+}
+
+@matdet(size: int, arr: ptr<float>) : float {
+  one_i: int = const 1;
+  zero_f: float = const 0.0;
+  one_f: float = const 1.0;
+  neg_one_f: float = const -1.0;
+  zero = const 0.0;
+
+  cond: bool = eq size one_i;
+  br cond .base_case .recursive_case;
+
+  .base_case:
+  loc: ptr<float> = ptradd arr zero;
+  val: float = load loc;
+  ret val;
+
+  .recursive_case:
+  det: float = id zero_f;
+  sign: float = id one_f;
+  i: int = const 0;
+
+  sub_size: int = sub size one_i;
+
+  .loop:
+  cond: bool = lt i size;
+  br cond .body .done;
+
+  .body:
+  allocsize_i: int = mul sub_size sub_size;
+  submatrix: ptr<float> = alloc allocsize_i;
+
+  row: int = id one_i;
+  sub_idx: int = const 0;
+
+  .submatrix_row_loop:
+  cond_row: bool = lt row size;
+  br cond_row .submatrix_row_body .submatrix_row_done;
+
+  .submatrix_row_body:
+  col: int = const 0;
+
+  .submatrix_col_loop:
+  cond_col: bool = lt col size;
+  br cond_col .submatrix_col_body .submatrix_col_done;
+
+  .submatrix_col_body:
+  cond_skip: bool = eq col i;
+  br cond_skip .skip_element .store_element;
+
+  .skip_element:
+  col: int = add col one_i;
+  jmp .submatrix_col_loop;
+
+  .store_element:
+  row_offset: int = mul row size;
+  orig_idx: int = add row_offset col;
+  orig_ptr: ptr<float> = ptradd arr orig_idx;
+  val: float = load orig_ptr;
+
+  sub_row_offset_i: int = div sub_idx sub_size;
+  sub_row_offset_i: int = mul sub_row_offset_i sub_size;
+  sub_idx_col_i: int = call @mod sub_idx sub_size;
+  sub_idx_final_i: int = add sub_row_offset_i sub_idx_col_i;
+  sub_ptr: ptr<float> = ptradd submatrix sub_idx_final_i;
+
+  store sub_ptr val;
+  sub_idx: int = add sub_idx one_i;
+  col: int = add col one_i;
+  jmp .submatrix_col_loop;
+
+  .submatrix_col_done:
+  row: int = add row one_i;
+  jmp .submatrix_row_loop;
+
+  .submatrix_row_done:
+  # Recursively calculate determinant
+  subdet: float = call @matdet sub_size submatrix;
+  cofactor: float = fmul sign subdet;
+
+  term_ptr: ptr<float> = ptradd arr i;
+  term_val: float = load term_ptr;
+  term: float = fmul cofactor term_val;
+  det: float = fadd det term;
+
+  free submatrix;
+
+  # Alternate sign
+  sign: float = fmul sign neg_one_f;
+  i: int = add i one_i;
+  jmp .loop;
+
+  .done:
+  ret det;
+}
+
+@outerproduct(v_size: int, u_size: int, v: ptr<float>, u: ptr<float>, dest: ptr<float>) {
+  one: int = const 1;
+  i: int = const 0;
+
+  .outer.loop:
+  cond: bool = lt i v_size;
+  br cond .outer.body .outer.done;
+
+  .outer.body:
+  j: int = const 0;
+
+  .inner.loop:
+  cond: bool = lt j u_size;
+  br cond .inner.body .inner.done;
+
+  .inner.body:
+  row_start: int = mul i u_size;
+  dest_idx: int = add row_start j;
+
+  v_ptr: ptr<float> = ptradd v i;
+  v_val: float = load v_ptr;
+
+  u_ptr: ptr<float> = ptradd u j;
+  u_val: float = load u_ptr;
+
+  prod: float = fmul v_val u_val;
+
+  dest_ptr: ptr<float> = ptradd dest dest_idx;
+  store dest_ptr prod;
+
+  j: int = add j one;
+  jmp .inner.loop;
+
+  .inner.done:
+  i: int = add i one;
+  jmp .outer.loop;
+
+  .outer.done:
+  ret;
+}
+
+@PowerIteration(size: int, max_iter: int, tol: float, A: ptr<float>, eigenvector: ptr<float>, eigenvalue: ptr<float>) {
+  # Initialize a random vector
+  i: int = const 0;
+  one: int = const 1;
+  .init_random_vec:
+  cond: bool = lt i size;
+  br cond .init_random_body .init_random_done;
+  
+  .init_random_body:
+  vloc: ptr<float> = ptradd eigenvector i;
+  val: float = const 1.0;
+  store vloc val;
+  i: int = add i one;
+  jmp .init_random_vec;
+  
+  .init_random_done:
+  # Normalize the initial vector
+  call @normalize_vector size eigenvector;
+  
+  new_vec: ptr<float> = alloc size;
+  iter: int = const 0;
+  prev_eigenvalue: float = const 0.0;
+  
+  .power_iter_loop:
+  cond: bool = lt iter max_iter;
+  br cond .power_iter_body .power_iter_done;
+  
+  .power_iter_body:
+  call @matmul size size size one A eigenvector new_vec;
+  
+  # Normalize the new vector
+  call @normalize_vector size new_vec;
+  
+  i: int = const 0;
+  .copy_loop:
+  cond: bool = lt i size;
+  br cond .copy_body .copy_done;
+  
+  .copy_body:
+  vloc_new: ptr<float> = ptradd new_vec i;
+  val_new: float = load vloc_new;
+  vloc_old: ptr<float> = ptradd eigenvector i;
+  store vloc_old val_new;
+  i: int = add i one;
+  jmp .copy_loop;
+  
+  .copy_done:
+
+  call @matmul size size size one A eigenvector new_vec;
+  current_eigenvalue: float = call @dot size eigenvector new_vec;
+  
+  diff: float = fsub current_eigenvalue prev_eigenvalue;
+  store eigenvalue current_eigenvalue;
+  abs_diff: float = call @fabs diff;
+  cond: bool = flt abs_diff tol;
+  br cond .converged .not_converged;
+  
+  .converged:
+  store eigenvalue current_eigenvalue;
+  jmp .power_iter_done;
+  
+  .not_converged:
+  prev_eigenvalue: float = id current_eigenvalue;
+  iter: int = add iter one;
+  jmp .power_iter_loop;
+  
+  .power_iter_done:
+  free new_vec;
+  ret;
+}
+
+@geteigen(size: int, max_iter: int, tol: float, A: ptr<float>, eigenvalues: ptr<float>, eigenvectors: ptr<float>) {
+  size_squared: int = mul size size;
+  one: int = const 1;
+  working_matrix: ptr<float> = alloc size_squared;
+  i: int = const 0;
+  size_squared: int = mul size size;
+
+  .copy_matrix:
+  cond: bool = lt i size_squared;
+  br cond .copy_body .copy_done;
+
+  .copy_body:
+  src_addr: ptr<float> = ptradd A i;
+  src_val: float = load src_addr;
+  dest_addr: ptr<float> = ptradd working_matrix i;
+  store dest_addr src_val;
+  i: int = add i one;
+  jmp .copy_matrix;
+
+  .copy_done:
+
+  eigenvector: ptr<float> = alloc size;
+
+  # Loop over all eigenvalues/eigenvectors
+  k: int = const 0;
+
+  .eigen_loop:
+  cond: bool = lt k size;
+  br cond .compute_eigen .loop_done;
+
+  .compute_eigen:
+  eigenvalue_loc: ptr<float> = ptradd eigenvalues k;
+  call @PowerIteration size max_iter tol working_matrix eigenvector eigenvalue_loc;
+
+  # Store the eigenvector in the eigenvectors matrix
+  i: int = const 0;
+  eigenvector_offset: int = mul k size;
+  eigenvector_base: ptr<float> = ptradd eigenvectors eigenvector_offset;
+
+  .store_eigenvector:
+  cond: bool = lt i size;
+  br cond .store_body .store_done;
+
+  .store_body:
+  eigenvector_addr: ptr<float> = ptradd eigenvector i;
+  val: float = load eigenvector_addr;
+  dest_addr: ptr<float> = ptradd eigenvector_base i;
+  store dest_addr val;
+  i: int = add i one;
+  jmp .store_eigenvector;
+
+  .store_done:
+
+  # Subtract the outer product of the eigenvector scaled by the eigenvalue from the working matrix
+  temp_outer: ptr<float> = alloc size_squared;
+  call @outerproduct size size eigenvector eigenvector temp_outer;
+
+  scale: float = load eigenvalue_loc;
+  i: int = const 0;
+
+  .update_matrix:
+  cond: bool = lt i size_squared;
+  br cond .update_body .update_done;
+
+  .update_body:
+  working_addr: ptr<float> = ptradd working_matrix i;
+  orig_val: float = load working_addr;
+  outer_addr: ptr<float> = ptradd temp_outer i;
+  outer_val: float = load outer_addr;
+  scaled_val: float = fmul scale outer_val;
+  new_val: float = fsub orig_val scaled_val;
+  store working_addr new_val;
+  i: int = add i one;
+  jmp .update_matrix;
+
+  .update_done:
+  free temp_outer;
+
+  k: int = add k one;
+  jmp .eigen_loop;
+
+  .loop_done:
+  free working_matrix;
+  free eigenvector;
+  ret;
+}
+
+
+
+@main() {
+  one: int = const 1;
+  scalar: float = const 2.0;  # Example scalar for scalar multiplication
+
+
+  rows: int = const 3;
+  cols: int = const 3;
+
+  # Allocate matrices
+  size1: int = mul rows cols;
+  size2: int = mul cols rows;  # For testing transpose or different shapes
+  arr1: ptr<float> = alloc size1;
+  arr2: ptr<float> = alloc size2;
+
+  num1: float = const 227.6924500370999;
+  num2: float = const -733.1203919524;
+  num3: float = const 717.035875524;
+  num4: float = const 157.87913331660002;
+  num5: float = const -291.66866805949996;
+  num6: float = const -534.8771165753001;
+  num7: float = const 527.5148272177;
+  num8: float = const -874.3785134863;
+  num9: float = const 407.20279580319993;
+  num10: float = const -859.000581251;
+  num11: float = const -279.41147111329997;
+  num12: float = const 840.3847524153;
+  num13: float = const -438.80543831679995;
+  num14: float = const 956.2167804484;
+  num15: float = const -830.4964806094999;
+  num16: float = const -445.87179061300003;
+  num17: float = const -884.6756666362;
+  num18: float = const 589.7396428463001;
+
+  arr1_index: int = const 0;
+  arr2_index: int = const 0;
+
+
+  arr1_loc1: ptr<float> = ptradd arr1 arr1_index;
+  store arr1_loc1 num1;
+  arr1_index: int = add arr1_index one;
+  arr2_loc1: ptr<float> = ptradd arr2 arr2_index;
+  store arr2_loc1 num2;
+  arr2_index: int = add arr2_index one;
+  arr1_loc2: ptr<float> = ptradd arr1 arr1_index;
+  store arr1_loc2 num3;
+  arr1_index: int = add arr1_index one;
+  arr2_loc2: ptr<float> = ptradd arr2 arr2_index;
+  store arr2_loc2 num4;
+  arr2_index: int = add arr2_index one;
+  arr1_loc3: ptr<float> = ptradd arr1 arr1_index;
+  store arr1_loc3 num5;
+  arr1_index: int = add arr1_index one;
+  arr2_loc3: ptr<float> = ptradd arr2 arr2_index;
+  store arr2_loc3 num6;
+  arr2_index: int = add arr2_index one;
+  arr1_loc4: ptr<float> = ptradd arr1 arr1_index;
+  store arr1_loc4 num7;
+  arr1_index: int = add arr1_index one;
+  arr2_loc4: ptr<float> = ptradd arr2 arr2_index;
+  store arr2_loc4 num8;
+  arr2_index: int = add arr2_index one;
+  arr1_loc5: ptr<float> = ptradd arr1 arr1_index;
+  store arr1_loc5 num9;
+  arr1_index: int = add arr1_index one;
+  arr2_loc5: ptr<float> = ptradd arr2 arr2_index;
+  store arr2_loc5 num10;
+  arr2_index: int = add arr2_index one;
+  arr1_loc6: ptr<float> = ptradd arr1 arr1_index;
+  store arr1_loc6 num11;
+  arr1_index: int = add arr1_index one;
+  arr2_loc6: ptr<float> = ptradd arr2 arr2_index;
+  store arr2_loc6 num12;
+  arr2_index: int = add arr2_index one;
+  arr1_loc7: ptr<float> = ptradd arr1 arr1_index;
+  store arr1_loc7 num13;
+  arr1_index: int = add arr1_index one;
+  arr2_loc7: ptr<float> = ptradd arr2 arr2_index;
+  store arr2_loc7 num14;
+  arr2_index: int = add arr2_index one;
+  arr1_loc8: ptr<float> = ptradd arr1 arr1_index;
+  store arr1_loc8 num15;
+  arr1_index: int = add arr1_index one;
+  arr2_loc8: ptr<float> = ptradd arr2 arr2_index;
+  store arr2_loc8 num16;
+  arr2_index: int = add arr2_index one;
+  arr1_loc9: ptr<float> = ptradd arr1 arr1_index;
+  store arr1_loc9 num17;
+  arr1_index: int = add arr1_index one;
+  arr2_loc9: ptr<float> = ptradd arr2 arr2_index;
+  store arr2_loc9 num18;
+  arr2_index: int = add arr2_index one;
+
+
+  max_size: int = mul rows cols; 
+  dest: ptr<float> = alloc max_size;
+
+  call @printarray size1 arr1;
+  call @printarray size2 arr2;
+
+  # Test @identitymatrix
+  call @identitymatrix rows dest;
+  call @printarray max_size dest;
+
+  # Test @zeromatrix
+  call @zeromatrix rows cols dest;
+  call @printarray max_size dest;
+
+  # Test @diagonalmatrix
+  call @diagonalmatrix rows arr1 dest;
+  call @printarray max_size dest;
+
+
+
+  # Test @matmul (only valid if cols of arr1 == rows of arr2)
+  cond_matmul: bool = eq cols rows;
+  br cond_matmul .matmul.body .matmul.skip;
+  .matmul.body:
+  call @matmul rows cols cols rows arr1 arr2 dest;
+  call @printarray size1 dest;
+  jmp .matmul.end;
+  .matmul.skip:
+  jmp .matmul.end;
+  .matmul.end:
+
+  # Test @matadd (only valid for same dimensions)
+  call @matadd rows cols arr1 arr2 dest;
+  call @printarray size1 dest;
+
+  # Test @matsub (only valid for same dimensions)
+  call @matsub rows cols arr1 arr2 dest;
+  call @printarray size1 dest;
+
+  # Test @scalarmul
+  call @scalarmul rows cols scalar arr1 dest;
+  call @printarray size1 dest;
+
+  # Test @mattranspose
+  transpose_size: int = mul cols rows;  # Transposed matrix size
+  call @mattranspose rows cols arr1 dest;
+  call @printarray transpose_size dest;
+
+  # Test @geteigen (for square matrices)
+  eigenvec: ptr<float> = alloc size1;
+  eigenvalue: ptr<float> = alloc rows;
+  iters: int = const 100;
+  tol: float = const 0.0001;
+
+  call @geteigen rows iters tol arr1 eigenvalue eigenvec;
+
+  call @printarray size1 eigenvec;
+  call @printarray rows eigenvalue;
+
+  # Test @matdet (only valid for square matrices)
+  cond_det: bool = eq rows cols;
+  br cond_det .det.body .det.skip;
+  .det.body:
+  det: float = call @matdet rows arr1;
+  print det;
+  jmp .det.end;
+  .det.skip:
+  jmp .det.end;
+  .det.end:
+
+  # Cleanup
+  free eigenvalue;
+  free eigenvec;
+  free arr1;
+  free arr2;
+  free dest;
+
+  ret;
+}
+

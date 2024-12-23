@@ -28,22 +28,21 @@ def run_command_on_files(bril_files, command_template):
         command = command_template.format(file=bril_file)
         try:
             print(f"Running command: {command}")
-            result = str(subprocess.check_output(command, timeout=2))
+            result = subprocess.check_output(command, shell=True, timeout=600, text=True)
         except Exception as e:
-            print(f"Error while running command on {bril_file}, running for two seconds, stopping it now {e}")
+            print(f"Error while running command on {bril_file}, running for ten minutes, stopping it now {e}")
         
         results.append(result)
     return results
 
 
 if __name__ == "__main__":
-    directory_to_search = "../../bril/benchmarks/core"
+    directory_to_search = "../../bril/benchmarks"
 
     bench_cmds = dict(
-        #baseline = "cat {file} | bril2json | python ../../bril/examples/to_ssa.py | python ../../bril/examples/from_ssa.py",
-        inlining = "cat {file} | bril2json | python ../../bril/examples/to_ssa.py | python inlining.py"
-        # ssa = "cat {file} | bril2json | python optimize.py --no-licm",
-        # licm = "cat {file} | bril2json | python optimize.py",
+        no_recursion = "cat {file} | bril2json | python inlining.py 0",
+        depth_1 = "cat {file} | bril2json | python inlining.py 1",
+        depth_2 = "cat {file} | bril2json | python inlining.py 2"
     )
 
     bril_files = find_bril_files(directory_to_search)
@@ -60,17 +59,33 @@ if __name__ == "__main__":
         out = dict(
             benchmark = [],
             run = [],
+            baseline = [],
+            best = [],
             results = []
         )
         for file in tqdm.tqdm(bril_files):
             for title, cmd in bench_cmds.items():
+                if "conjugate-gradient" in file.split("/")[-1].split(".")[0]:
+                    continue
                 out["benchmark"].append(file.split("/")[-1].split(".")[0])
                 out["run"].append(title)
-                out["results"].append(run_command_on_files([file], cmd)[0])
+                output = run_command_on_files([file], cmd)[0]
+                if type(output) == int:
+                    out["baseline"].append(output)
+                    out["best"].append(output)
+                    out["results"].append(output)
+                else:
+                    output = output.split("\n")
+                    out["baseline"].append(output[0])
+                    out["best"].append(output[1])
+                    out["results"].append(output[2])
+        
+                
+
 
             
         df = pd.DataFrame(out, columns=out.keys())
-        df.to_csv("tests.csv", index=False)
+        df.to_csv("tests_size.csv", index=False)
     else:
         print("No .bril files found.")
     

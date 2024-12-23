@@ -27,7 +27,7 @@ def build_inlining_tree(CG, edgelist=None):
     if len(list(nx.weakly_connected_components(CG))) > 1:
         return build_inlining_tree_from_components(CG, edgelist)
 
-    p_edge = choose_part(CG)
+    p_edge = choose_part(CG)        
 
     not_inlined = nx.DiGraph(CG)
     not_inlined.remove_edge(*p_edge)
@@ -73,6 +73,9 @@ def adj_to_least_ecc(CG, edges):
     return edges[0] if edges[0] in CG.edges else (edges[0][1], edges[0][0])
 
 def contract(CG, edge):
+    if edge[0] == edge[1]:
+        CG.remove_edge(*edge)
+        return CG
     u, v = edge
     new_node_name = f"{u}:{v}"
     
@@ -87,7 +90,7 @@ def contract(CG, edge):
         if succ != v:
             contracted_graph.add_edge(new_node_name, succ)
     for succ in CG.successors(v):
-        if succ != u:
+        if succ != u and succ != v:
             contracted_graph.add_edge(new_node_name, succ)
     
     contracted_graph.remove_node(u)
