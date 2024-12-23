@@ -1,5 +1,7 @@
 import networkx as nx
 import matplotlib.pyplot as plt
+from networkx.drawing.nx_pydot import graphviz_layout
+import plotly.graph_objects as go
 
 class InliningTreeLeaf:
     def __init__(self, inlined_edges):
@@ -210,6 +212,15 @@ def plot_inlining_tree(tree):
     plt.close()
 
 def plot_call_graph(CG):
-    nx.draw(CG, with_labels=True)
+    if not isinstance(CG, nx.DiGraph):
+        CG = nx.DiGraph(CG)
+    
+    pos = graphviz_layout(CG, prog="dot")
+    
+    # Dynamically set the figure size based on the number of nodes
+    num_nodes = len(CG.nodes)
+    plt.figure(figsize=(max(12, num_nodes * 0.5), max(10, num_nodes * 0.3)))
+    
+    nx.draw(CG, pos, with_labels=True, arrows=True, node_size=2000, node_color="lightblue", font_size=10)
     plt.savefig("call_graph.png")
     plt.close()

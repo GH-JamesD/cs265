@@ -1,4 +1,4 @@
-@printarray(size: int, arr: ptr<float>) {
+@print_array(size: int, arr: ptr<float>) {
   i: int = const 0;
   one: int = const 1;
   .loop:
@@ -15,7 +15,7 @@
   ret;
 }
 
-@identitymatrix(size: int, dest: ptr<float>) {
+@identity_matrix(size: int, dest: ptr<float>) {
   onei: float = const 1.0;
   one: int = const 1;
   zero: float = const 0.0;
@@ -62,7 +62,7 @@
   ret;
 }
 
-@zeromatrix(rows: int, cols: int, dest: ptr<float>) {
+@zero_matrix(rows: int, cols: int, dest: ptr<float>) {
   zero: float = const 0.0;
   i: int = const 0;
   one: int = const 1;
@@ -96,7 +96,7 @@
   ret;
 }
 
-@diagonalmatrix(size: int, diag: ptr<float>, dest: ptr<float>) {
+@diagonal_matrix(size: int, diag: ptr<float>, dest: ptr<float>) {
   zero: float = const 0.0;
   one: int = const 1;
   i: int = const 0;
@@ -172,10 +172,10 @@
   ret acc;
 }
 
-@vectornorm(size: int, v: ptr<float>): float {
+@vector_norm(size: int, v: ptr<float>): float {
   zero: float = const 0.0;
   i: int = const 0;
-  one = const 1;
+  one: int = const 1;
   acc: float = id zero;
 
   .loop:
@@ -205,7 +205,7 @@
   one: int = const 1;
   
 
-  norm: float = call @vectornorm size vec;
+  norm: float = call @vector_norm size vec;
   
   i: int = const 0;
   .normalize_elements:
@@ -277,7 +277,7 @@
     ret r;
 }
 
-@matmul(rows1: int, cols1: int, rows2: int, cols2: int, arr1: ptr<float>, arr2: ptr<float>, dest: ptr<float>) {
+@mat_mul(rows1: int, cols1: int, rows2: int, cols2: int, arr1: ptr<float>, arr2: ptr<float>, dest: ptr<float>) {
   one: int = const 1;
   row: int = const 0;
   .row.loop:
@@ -324,7 +324,7 @@
   ret;
 }
 
-@matadd(rows: int, cols: int, arr1: ptr<float>, arr2: ptr<float>, dest: ptr<float>) {
+@mat_add(rows: int, cols: int, arr1: ptr<float>, arr2: ptr<float>, dest: ptr<float>) {
   one: int = const 1;
   row: int = const 0;
   .row.loop:
@@ -360,7 +360,7 @@
   ret;
 }
 
-@matsub(rows: int, cols: int, arr1: ptr<float>, arr2: ptr<float>, dest: ptr<float>) {
+@mat_sub(rows: int, cols: int, arr1: ptr<float>, arr2: ptr<float>, dest: ptr<float>) {
   one: int = const 1;
   row: int = const 0;
   .row.loop:
@@ -396,7 +396,7 @@
   ret;
 }
 
-@scalarmul(rows: int, cols: int, scalar: float, arr: ptr<float>, dest: ptr<float>) {
+@scalar_mul(rows: int, cols: int, scalar: float, arr: ptr<float>, dest: ptr<float>) {
   one: int = const 1;
   row: int = const 0;
   .row.loop:
@@ -428,7 +428,7 @@
   ret;
 }
 
-@mattranspose(rows: int, cols: int, arr: ptr<float>, dest: ptr<float>) {
+@mat_transpose(rows: int, cols: int, arr: ptr<float>, dest: ptr<float>) {
   one: int = const 1;
   row: int = const 0;
 
@@ -468,12 +468,12 @@
   ret;
 }
 
-@matdet(size: int, arr: ptr<float>) : float {
+@mat_det(size: int, arr: ptr<float>) : float {
   one_i: int = const 1;
   zero_f: float = const 0.0;
   one_f: float = const 1.0;
   neg_one_f: float = const -1.0;
-  zero = const 0.0;
+  zero: int = const 0;
 
   cond: bool = eq size one_i;
   br cond .base_case .recursive_case;
@@ -543,7 +543,7 @@
 
   .submatrix_row_done:
   # Recursively calculate determinant
-  subdet: float = call @matdet sub_size submatrix;
+  subdet: float = call @mat_det sub_size submatrix;
   cofactor: float = fmul sign subdet;
 
   term_ptr: ptr<float> = ptradd arr i;
@@ -562,7 +562,7 @@
   ret det;
 }
 
-@outerproduct(v_size: int, u_size: int, v: ptr<float>, u: ptr<float>, dest: ptr<float>) {
+@outer_product(v_size: int, u_size: int, v: ptr<float>, u: ptr<float>, dest: ptr<float>) {
   one: int = const 1;
   i: int = const 0;
 
@@ -603,7 +603,7 @@
   ret;
 }
 
-@PowerIteration(size: int, max_iter: int, tol: float, A: ptr<float>, eigenvector: ptr<float>, eigenvalue: ptr<float>) {
+@power_iteration(size: int, max_iter: int, tol: float, A: ptr<float>, eigenvector: ptr<float>, eigenvalue: ptr<float>) {
   # Initialize a random vector
   i: int = const 0;
   one: int = const 1;
@@ -631,7 +631,7 @@
   br cond .power_iter_body .power_iter_done;
   
   .power_iter_body:
-  call @matmul size size size one A eigenvector new_vec;
+  call @mat_mul size size size one A eigenvector new_vec;
   
   # Normalize the new vector
   call @normalize_vector size new_vec;
@@ -651,7 +651,7 @@
   
   .copy_done:
 
-  call @matmul size size size one A eigenvector new_vec;
+  call @mat_mul size size size one A eigenvector new_vec;
   current_eigenvalue: float = call @dot size eigenvector new_vec;
   
   diff: float = fsub current_eigenvalue prev_eigenvalue;
@@ -674,7 +674,7 @@
   ret;
 }
 
-@geteigen(size: int, max_iter: int, tol: float, A: ptr<float>, eigenvalues: ptr<float>, eigenvectors: ptr<float>) {
+@get_eigen(size: int, max_iter: int, tol: float, A: ptr<float>, eigenvalues: ptr<float>, eigenvectors: ptr<float>) {
   size_squared: int = mul size size;
   one: int = const 1;
   working_matrix: ptr<float> = alloc size_squared;
@@ -706,7 +706,7 @@
 
   .compute_eigen:
   eigenvalue_loc: ptr<float> = ptradd eigenvalues k;
-  call @PowerIteration size max_iter tol working_matrix eigenvector eigenvalue_loc;
+  call @power_iteration size max_iter tol working_matrix eigenvector eigenvalue_loc;
 
   # Store the eigenvector in the eigenvectors matrix
   i: int = const 0;
@@ -729,7 +729,7 @@
 
   # Subtract the outer product of the eigenvector scaled by the eigenvalue from the working matrix
   temp_outer: ptr<float> = alloc size_squared;
-  call @outerproduct size size eigenvector eigenvector temp_outer;
+  call @outer_product size size eigenvector eigenvector temp_outer;
 
   scale: float = load eigenvalue_loc;
   i: int = const 0;
@@ -859,67 +859,67 @@
   max_size: int = mul rows cols; 
   dest: ptr<float> = alloc max_size;
 
-  call @printarray size1 arr1;
-  call @printarray size2 arr2;
+  call @print_array size1 arr1;
+  call @print_array size2 arr2;
 
-  # Test @identitymatrix
-  call @identitymatrix rows dest;
-  call @printarray max_size dest;
+  # Test @identity_matrix
+  call @identity_matrix rows dest;
+  call @print_array max_size dest;
 
-  # Test @zeromatrix
-  call @zeromatrix rows cols dest;
-  call @printarray max_size dest;
+  # Test @zero_matrix
+  call @zero_matrix rows cols dest;
+  call @print_array max_size dest;
 
-  # Test @diagonalmatrix
-  call @diagonalmatrix rows arr1 dest;
-  call @printarray max_size dest;
+  # Test @diagonal_matrix
+  call @diagonal_matrix rows arr1 dest;
+  call @print_array max_size dest;
 
 
 
-  # Test @matmul (only valid if cols of arr1 == rows of arr2)
+  # Test @mat_mul (only valid if cols of arr1 == rows of arr2)
   cond_matmul: bool = eq cols rows;
-  br cond_matmul .matmul.body .matmul.skip;
-  .matmul.body:
-  call @matmul rows cols cols rows arr1 arr2 dest;
-  call @printarray size1 dest;
-  jmp .matmul.end;
-  .matmul.skip:
-  jmp .matmul.end;
-  .matmul.end:
+  br cond_matmul .mat_mul.body .mat_mul.skip;
+  .mat_mul.body:
+  call @mat_mul rows cols cols rows arr1 arr2 dest;
+  call @print_array size1 dest;
+  jmp .mat_mul.end;
+  .mat_mul.skip:
+  jmp .mat_mul.end;
+  .mat_mul.end:
 
-  # Test @matadd (only valid for same dimensions)
-  call @matadd rows cols arr1 arr2 dest;
-  call @printarray size1 dest;
+  # Test @mat_add (only valid for same dimensions)
+  call @mat_add rows cols arr1 arr2 dest;
+  call @print_array size1 dest;
 
-  # Test @matsub (only valid for same dimensions)
-  call @matsub rows cols arr1 arr2 dest;
-  call @printarray size1 dest;
+  # Test @mat_sub (only valid for same dimensions)
+  call @mat_sub rows cols arr1 arr2 dest;
+  call @print_array size1 dest;
 
-  # Test @scalarmul
-  call @scalarmul rows cols scalar arr1 dest;
-  call @printarray size1 dest;
+  # Test @scalar_mul
+  call @scalar_mul rows cols scalar arr1 dest;
+  call @print_array size1 dest;
 
-  # Test @mattranspose
+  # Test @mat_transpose
   transpose_size: int = mul cols rows;  # Transposed matrix size
-  call @mattranspose rows cols arr1 dest;
-  call @printarray transpose_size dest;
+  call @mat_transpose rows cols arr1 dest;
+  call @print_array transpose_size dest;
 
-  # Test @geteigen (for square matrices)
+  # Test @get_eigen (for square matrices)
   eigenvec: ptr<float> = alloc size1;
   eigenvalue: ptr<float> = alloc rows;
   iters: int = const 100;
   tol: float = const 0.0001;
 
-  call @geteigen rows iters tol arr1 eigenvalue eigenvec;
+  call @get_eigen rows iters tol arr1 eigenvalue eigenvec;
 
-  call @printarray size1 eigenvec;
-  call @printarray rows eigenvalue;
+  call @print_array size1 eigenvec;
+  call @print_array rows eigenvalue;
 
-  # Test @matdet (only valid for square matrices)
+  # Test @mat_det (only valid for square matrices)
   cond_det: bool = eq rows cols;
   br cond_det .det.body .det.skip;
   .det.body:
-  det: float = call @matdet rows arr1;
+  det: float = call @mat_det rows arr1;
   print det;
   jmp .det.end;
   .det.skip:

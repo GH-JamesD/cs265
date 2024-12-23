@@ -1,0 +1,550 @@
+@initialize_bodies(): ptr<ptr<float>> {
+    x1: float = const -54.11495;
+    y1: float = const 11.22052;
+    z1: float = const 25.16728;
+    vx1: float = const -34.26059;
+    vy1: float = const 6.13589;
+    vz1: float = const 62.87035;
+    mass1: float = const 7432.78144;
+    x2: float = const 2.74263;
+    y2: float = const -6.6546;
+    z2: float = const 6.8888;
+    vx2: float = const -53.81882;
+    vy2: float = const -46.94664;
+    vz2: float = const -56.63686;
+    mass2: float = const 2157.52798;
+    x3: float = const 61.80426;
+    y3: float = const -11.7015;
+    z3: float = const 46.14893;
+    vx3: float = const 11.74652;
+    vy3: float = const -40.51671;
+    vz3: float = const 38.39135;
+    mass3: float = const 2197.15699;
+    x4: float = const -4.23889;
+    y4: float = const -41.34052;
+    z4: float = const 42.17411;
+    vx4: float = const 51.7347;
+    vy4: float = const 59.11115;
+    vz4: float = const -41.61646;
+    mass4: float = const 2979.80879;
+    x5: float = const -31.45486;
+    y5: float = const -8.99681;
+    z5: float = const -12.98979;
+    vx5: float = const -45.64824;
+    vy5: float = const 5.43285;
+    vz5: float = const -38.96801;
+    mass5: float = const 9984.08928;
+    x6: float = const -11.49609;
+    y6: float = const -66.78666;
+    z6: float = const -39.20714;
+    vx6: float = const 54.07499;
+    vy6: float = const 64.74298;
+    vz6: float = const 52.20523;
+    mass6: float = const 8286.2834;
+    x7: float = const -92.72839;
+    y7: float = const -69.60492;
+    z7: float = const 42.31689;
+    vx7: float = const -40.73987;
+    vy7: float = const 9.93429;
+    vz7: float = const 5.93824;
+    mass7: float = const 7260.99089;
+
+    arrsize: int = const 7;
+    bodies: ptr<ptr<float>> = alloc arrsize;
+    one: int = const 1;
+
+    index: int = const 0;
+    
+    loc1: ptr<ptr<float>> = ptradd bodies index;
+    body1: ptr<float> = call @create_body x1 y1 z1 vx1 vy1 vz1 mass1;
+    store loc1 body1;
+    index: int = add index one;
+
+    loc2: ptr<ptr<float>> = ptradd bodies index;
+    body2: ptr<float> = call @create_body x2 y2 z2 vx2 vy2 vz2 mass2;
+    store loc2 body2;
+    index: int = add index one;
+
+    loc3: ptr<ptr<float>> = ptradd bodies index;
+    body3: ptr<float> = call @create_body x3 y3 z3 vx3 vy3 vz3 mass3;
+    store loc3 body3;
+    index: int = add index one;
+
+    loc4: ptr<ptr<float>> = ptradd bodies index;
+    body4: ptr<float> = call @create_body x4 y4 z4 vx4 vy4 vz4 mass4;
+    store loc4 body4;
+    index: int = add index one;
+
+    loc5: ptr<ptr<float>> = ptradd bodies index;
+    body5: ptr<float> = call @create_body x5 y5 z5 vx5 vy5 vz5 mass5;
+    store loc5 body5;
+    index: int = add index one;
+
+    loc6: ptr<ptr<float>> = ptradd bodies index;
+    body6: ptr<float> = call @create_body x6 y6 z6 vx6 vy6 vz6 mass6;
+    store loc6 body6;
+    index: int = add index one;
+
+    loc7: ptr<ptr<float>> = ptradd bodies index;
+    body7: ptr<float> = call @create_body x7 y7 z7 vx7 vy7 vz7 mass7;
+    store loc7 body7;
+
+    ret bodies;
+}
+
+@zero_array(size: int): ptr<float> {
+    arr: ptr<float> = alloc size;
+    zero: float = const 0.0;
+    one: int = const 1;
+    index: int = const 0;
+    .loop:
+    loc: ptr<float> = ptradd arr index;
+    store loc zero;
+    index: int = add index one;
+    cmp: bool = lt index size;
+    br cmp .loop .done;
+    .done:
+    ret arr;
+}
+
+@initialize_forces(numBodies: int): ptr<ptr<float>> {
+    forces: ptr<ptr<float>> = alloc numBodies;
+    zero: float = const 0.0;
+    one: int = const 1;
+    index: int = const 0;
+    three: int = const 3;
+    .loop:
+    loc: ptr<ptr<float>> = ptradd forces index;
+    force: ptr<float> = call @zero_array three;
+    store loc force;
+    index: int = add index one;
+    cmp: bool = lt index numBodies;
+    br cmp .loop .done;
+    .done:
+    ret forces;
+}
+
+@fsqrt(num: float) : float {
+  zero: float = const 0.0;
+  two: float = const 2.0;
+  is_zero: bool = feq num zero;
+  br is_zero .return_zero .guess;
+
+  .return_zero:
+  ret zero;
+
+  .guess:
+
+  guess: float = fdiv num two;
+  epsilon: float = const 0.0001;
+
+  .loop:
+  divisor: float = fdiv num guess;
+  sum: float = fadd guess divisor;
+  next_guess: float = fdiv sum two;
+
+  diff: float = fsub guess next_guess;
+  abs_diff: float = call @fabs diff;
+  converged: bool = fle abs_diff epsilon;
+  br converged .done .next_iteration;
+  .next_iteration:
+
+  guess: float = id next_guess;
+  jmp .loop;
+
+  .done:
+  ret guess;
+}
+
+@fabs(val: float) : float {
+  zero: float = const 0.0;
+  is_negative: bool = flt val zero;
+  br is_negative .negate .positive;
+
+  .negate:
+  negated: float = fsub zero val;
+  ret negated;
+
+  .positive:
+  ret val;
+}
+
+@create_body(x: float, y: float, z: float, vx: float, vy: float, vz: float, mass: float): ptr<float> {
+    arrsize: int = const 7;
+    body: ptr<float> = alloc arrsize;
+    one: int = const 1;
+
+    index: int = const 0;
+    
+    loc1: ptr<float> = ptradd body index;
+    store loc1 x;
+    index: int = add index one;
+
+    loc2: ptr<float> = ptradd body index;
+    store loc2 y;
+    index: int = add index one;
+
+    loc3: ptr<float> = ptradd body index;
+    store loc3 z;
+    index: int = add index one;
+
+    loc4: ptr<float> = ptradd body index;
+    store loc4 vx;
+    index: int = add index one;
+
+    loc5: ptr<float> = ptradd body index;
+    store loc5 vy;
+    index: int = add index one;
+
+    loc6: ptr<float> = ptradd body index;
+    store loc6 vz;
+    index: int = add index one;
+
+    loc7: ptr<float> = ptradd body index;
+    store loc7 mass;
+
+    ret body;
+}
+
+@calculate_distance(bodyA: ptr<float>, bodyB: ptr<float>): float {
+    idxX: int = const 0;
+    idxY: int = const 1;
+    idxZ: int = const 2;
+
+    ptrAx: ptr<float> = ptradd bodyA idxX;
+    ptrAy: ptr<float> = ptradd bodyA idxY;
+    ptrAz: ptr<float> = ptradd bodyA idxZ;
+
+    posAx: float = load ptrAx;
+    posAy: float = load ptrAy;
+    posAz: float = load ptrAz;
+
+    ptrBx: ptr<float> = ptradd bodyB idxX;
+    ptrBy: ptr<float> = ptradd bodyB idxY;
+    ptrBz: ptr<float> = ptradd bodyB idxZ;
+
+    posBx: float = load ptrBx;
+    posBy: float = load ptrBy;
+    posBz: float = load ptrBz;
+
+    dx: float = fsub posAx posBx;
+    dy: float = fsub posAy posBy;
+    dz: float = fsub posAz posBz;
+
+    dx2: float = fmul dx dx;
+    dy2: float = fmul dy dy;
+    dz2: float = fmul dz dz;
+
+    sumDyDz: float = fadd dy2 dz2;
+    sumSquares: float = fadd dx2 sumDyDz;
+
+    distance: float = call @fsqrt sumSquares;
+
+    ret distance;
+}
+
+@calculate_force(bodyA: ptr<float>, bodyB: ptr<float>): ptr<float> {
+    G: float = const 0.0000000000667430;
+    idxX: int = const 0;
+    idxY: int = const 1;
+    idxZ: int = const 2;
+    idxMass: int = const 6;
+    one: float = const 1.0;
+
+    ptrAx: ptr<float> = ptradd bodyA idxX;
+    ptrAy: ptr<float> = ptradd bodyA idxY;
+    ptrAz: ptr<float> = ptradd bodyA idxZ;
+    posAx: float = load ptrAx;
+    posAy: float = load ptrAy;
+    posAz: float = load ptrAz;
+
+    ptrBx: ptr<float> = ptradd bodyB idxX;
+    ptrBy: ptr<float> = ptradd bodyB idxY;
+    ptrBz: ptr<float> = ptradd bodyB idxZ;
+    posBx: float = load ptrBx;
+    posBy: float = load ptrBy;
+    posBz: float = load ptrBz;
+
+    distance: float = call @calculate_distance bodyA bodyB;
+
+    ptrMassA: ptr<float> = ptradd bodyA idxMass;
+    ptrMassB: ptr<float> = ptradd bodyB idxMass;
+    massA: float = load ptrMassA;
+    massB: float = load ptrMassB;
+
+    massmult: float = fmul massA massB;
+
+    forceMagnitude: float = fmul G massmult;
+    distsquare: float = fmul distance distance;
+    forceMagnitude: float = fdiv forceMagnitude distsquare;
+
+    dx: float = fsub posBx posAx;
+    dy: float = fsub posBy posAy;
+    dz: float = fsub posBz posAz;
+
+    distInverse: float = fdiv one distance;
+    unitDx: float = fmul dx distInverse;
+    unitDy: float = fmul dy distInverse;
+    unitDz: float = fmul dz distInverse;
+
+    forceX: float = fmul forceMagnitude unitDx;
+    forceY: float = fmul forceMagnitude unitDy;
+    forceZ: float = fmul forceMagnitude unitDz;
+
+    arrsize: int = const 3; 
+    force: ptr<float> = alloc arrsize;
+    loc1: ptr<float> = ptradd force idxX;
+    store loc1 forceX;
+    loc2: ptr<float> = ptradd force idxY;
+    store loc2 forceY;
+    loc3: ptr<float> = ptradd force idxZ;
+    store loc3 forceZ;
+
+    ret force;
+}
+
+@apply_force(body: ptr<float>, force: ptr<float>, timestep: float) {
+    idxMass: int = const 6;
+    idxVx: int = const 3;
+    idxVy: int = const 4;
+    idxVz: int = const 5;
+
+    ptrMass: ptr<float> = ptradd body idxMass;
+    mass: float = load ptrMass;
+
+    forceXindex: int = const 0;
+    forceYindex: int = const 1;
+    forceZindex: int = const 2;
+
+    ptrForceX: ptr<float> = ptradd force forceXindex;
+    ptrForceY: ptr<float> = ptradd force forceYindex;
+    ptrForceZ: ptr<float> = ptradd force forceZindex;
+
+    forceX: float = load ptrForceX;
+    forceY: float = load ptrForceY;
+    forceZ: float = load ptrForceZ;
+
+    accelX: float = fdiv forceX mass;
+    accelY: float = fdiv forceY mass;
+    accelZ: float = fdiv forceZ mass;
+
+    ptrVx: ptr<float> = ptradd body idxVx;
+    ptrVy: ptr<float> = ptradd body idxVy;
+    ptrVz: ptr<float> = ptradd body idxVz;
+
+    vx: float = load ptrVx;
+    vy: float = load ptrVy;
+    vz: float = load ptrVz;
+
+    accelX_timestep: float = fmul accelX timestep;
+    accelY_timestep: float = fmul accelY timestep;
+    accelZ_timestep: float = fmul accelZ timestep;
+
+    newVx: float = fadd vx accelX_timestep;
+    newVy: float = fadd vy accelY_timestep;
+    newVz: float = fadd vz accelZ_timestep;
+
+    store ptrVx newVx;
+    store ptrVy newVy;
+    store ptrVz newVz;
+}
+
+@update_position(body: ptr<float>, timeStep: float) {
+    idxX: int = const 0;
+    idxY: int = const 1;
+    idxZ: int = const 2;
+    idxVx: int = const 3;
+    idxVy: int = const 4;
+    idxVz: int = const 5;
+
+    ptrX: ptr<float> = ptradd body idxX;
+    ptrY: ptr<float> = ptradd body idxY;
+    ptrZ: ptr<float> = ptradd body idxZ;
+
+    posX: float = load ptrX;
+    posY: float = load ptrY;
+    posZ: float = load ptrZ;
+
+    ptrVx: ptr<float> = ptradd body idxVx;
+    ptrVy: ptr<float> = ptradd body idxVy;
+    ptrVz: ptr<float> = ptradd body idxVz;
+
+    velX: float = load ptrVx;
+    velY: float = load ptrVy;
+    velZ: float = load ptrVz;
+
+    toaddX: float = fmul velX timeStep;
+    toaddY: float = fmul velY timeStep;
+    toaddZ: float = fmul velZ timeStep;
+
+    newPosX: float = fadd posX toaddX;
+    newPosY: float = fadd posY toaddY;
+    newPosZ: float = fadd posZ toaddZ;
+
+    store ptrX newPosX;
+    store ptrY newPosY;
+    store ptrZ newPosZ;
+}
+
+@simulate(bodies: ptr<ptr<float>>, timeStep: float) {
+    numBodies: int = const 7;
+    forces: ptr<ptr<float>> = call @initialize_forces numBodies;
+    one: int = const 1;
+
+    i: int = const 0;
+    .loopI_start:
+
+    condI: bool = lt i numBodies;
+    br condI .loopI_body .loopI_end;
+
+    .loopI_body:
+    j: int = add i one; 
+    .loopJ_start:
+    condJ: bool = lt j numBodies;
+    br condJ .loopJ_body .loopJ_end;
+
+    .loopJ_body:
+    bodyILocation: ptr<ptr<float>> = ptradd bodies i;
+    ptrBodyI: ptr<float> = load bodyILocation;
+
+    bodyJLocation: ptr<ptr<float>> = ptradd bodies j;
+    ptrBodyJ: ptr<float> = load bodyJLocation;
+
+    forceIJ: ptr<float> = call @calculate_force ptrBodyI ptrBodyJ;
+
+    forceILocation: ptr<ptr<float>> = ptradd forces i;
+    forceI: ptr<float> = load forceILocation;
+
+    forceJLocation: ptr<ptr<float>> = ptradd forces j;
+    forceJ: ptr<float> = load forceJLocation;
+
+    idxX: int = const 0;
+    idxY: int = const 1;
+    idxZ: int = const 2;
+
+    ptrForceIX: ptr<float> = ptradd forceI idxX;
+    ptrForceIY: ptr<float> = ptradd forceI idxY;
+    ptrForceIZ: ptr<float> = ptradd forceI idxZ;
+
+    ptrForceIJX: ptr<float> = ptradd forceIJ idxX;
+    ptrForceIJY: ptr<float> = ptradd forceIJ idxY;
+    ptrForceIJZ: ptr<float> = ptradd forceIJ idxZ;
+
+    forceIX: float = load ptrForceIX;
+    forceIY: float = load ptrForceIY;
+    forceIZ: float = load ptrForceIZ;
+
+    forceIJX: float = load ptrForceIJX;
+    forceIJY: float = load ptrForceIJY;
+    forceIJZ: float = load ptrForceIJZ;
+
+    newForceIX: float = fadd forceIX forceIJX;
+    newForceIY: float = fadd forceIY forceIJY;
+    newForceIZ: float = fadd forceIZ forceIJZ;
+
+    store ptrForceIX newForceIX;
+    store ptrForceIY newForceIY;
+    store ptrForceIZ newForceIZ;
+
+    ptrForceJX: ptr<float> = ptradd forceJ idxX;
+    ptrForceJY: ptr<float> = ptradd forceJ idxY;
+    ptrForceJZ: ptr<float> = ptradd forceJ idxZ;
+
+    forceJX: float = load ptrForceJX;
+    forceJY: float = load ptrForceJY;
+    forceJZ: float = load ptrForceJZ;
+
+    newForceJX: float = fsub forceJX forceIJX;
+    newForceJY: float = fsub forceJY forceIJY;
+    newForceJZ: float = fsub forceJZ forceIJZ;
+
+    store ptrForceJX newForceJX;
+    store ptrForceJY newForceJY;
+    store ptrForceJZ newForceJZ;
+
+    free forceIJ;
+
+    j: int = add j one;
+    jmp .loopJ_start;
+
+    .loopJ_end:
+    i: int = add i one;
+    jmp .loopI_start;
+
+    .loopI_end:
+
+    k: int = const 0;
+    .loopApply_start:
+    condApply: bool = lt k numBodies;
+    br condApply .loopApply_body .loopApply_end;
+
+    .loopApply_body:
+    bodyILoc: ptr<ptr<float>> = ptradd bodies k;
+    ptrBodyI: ptr<float> = load bodyILoc;
+
+    forceLocI: ptr<ptr<float>> = ptradd forces k;
+    forceI: ptr<float> = load forceLocI;
+
+    call @apply_force ptrBodyI forceI timeStep;
+
+    call @update_position ptrBodyI timeStep;
+
+    free forceI;
+
+    k: int = add k one;
+    jmp .loopApply_start;
+
+    .loopApply_end:
+
+    free forces;
+    ret;
+}
+
+@simulate_with_steps(bodies: ptr<ptr<float>>, steps: int, timeStep: float) {
+    step: int = const 0;
+    one: int = const 1;
+
+    .loop_start:
+    cond: bool = lt step steps;
+    br cond .loop_body .loop_end;
+
+    .loop_body:
+    call @simulate bodies timeStep;
+
+    step: int = add step one;
+
+    jmp .loop_start;
+
+    .loop_end:
+    ret;
+}
+
+@main() {
+    bodies: ptr<ptr<float>> = call @initialize_bodies;
+    steps: int = const 1000;
+    timeStep: float = const 0.01;
+    one: int = const 1;
+
+    call @simulate_with_steps bodies steps timeStep;
+
+    #free each body in bodies
+
+    i: int = const 0;
+    numBodies: int = const 7;
+    .loop:
+    cond: bool = lt i numBodies;
+    br cond .body .done;
+
+    .body:
+    bodyLoc: ptr<ptr<float>> = ptradd bodies i;
+    body: ptr<float> = load bodyLoc;
+
+    free body;
+
+    i: int = add i one;
+    jmp .loop;
+
+    .done:
+    free bodies;
+    ret;
+}
