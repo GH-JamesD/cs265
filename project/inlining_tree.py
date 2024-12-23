@@ -219,7 +219,7 @@ def plot_call_graph(CG):
     
     # Dynamically set the figure size based on the number of nodes
     num_nodes = len(CG.nodes)
-    plt.figure(figsize=(max(12, num_nodes * 0.5), max(10, num_nodes * 0.3)))
+    plt.figure(figsize=(max(10, num_nodes*.9), max(8, num_nodes * 0.7)))
     
     nx.draw(CG, pos, with_labels=True, arrows=True, node_size=2000, node_color="lightblue", font_size=10)
     plt.savefig("call_graph.png")

@@ -163,6 +163,32 @@ def implement_compile_measure(inlined_edges, prog, recursion_depth):
             os.remove(executable)
 
 
+def autotuner(CG, prog, depth, rounds):
+    decisions = {}
+    final_decisions = {}
+    for edge in CG.edges:
+        decisions[edge] = False
+    final_size = implement_compile_measure([], prog, depth)
+    print((), final_size)
+    for i in range(rounds):
+        for edge in CG.edges:
+            original = decisions[edge]
+            decisions[edge] = not decisions[edge]
+            inlined_edges = [(edge[0], edge[1]) for edge in decisions if decisions[edge]]
+            size = implement_compile_measure(inlined_edges, prog, depth)
+            if size >= final_size:
+                decisions[edge] = original
+            final_decisions[edge] = decisions[edge]
+            decisions[edge] = original
+        decisions = final_decisions
+        decisions_inline = [(edge[0], edge[1]) for edge in decisions if decisions[edge]]
+        final_size = implement_compile_measure(decisions_inline, prog, depth)
+        final_decisions = {}
+        print(tuple((edge[0], edge[1]) for edge in decisions if decisions[edge]), final_size)
+    return decisions, final_size
+
+    
+
 
 if __name__ == "__main__":
     if len(sys.argv) > 1:
@@ -175,15 +201,17 @@ if __name__ == "__main__":
     # print(bin_size)
     call_graph = get_call_graph(prog, depth == 0)
     plot_call_graph(call_graph)
-    inlining_tree = build_inlining_tree(call_graph)
+    #inlining_tree = build_inlining_tree(call_graph)
     #plot_inlining_tree(inlining_tree)
-    result_map  = evaluate_inlining_tree(inlining_tree, prog, depth)
-    print((), result_map[()])
+    #result_map  = evaluate_inlining_tree(inlining_tree, prog, depth)
+    #print((), result_map[()])
     # print key of min value
-    min_key = min(result_map, key=result_map.get)
-    print(min_key, result_map[min_key])
-    print(result_map)
+    #min_key = min(result_map, key=result_map.get)
+    #print(min_key, result_map[min_key])
+    #print(result_map)
     #for fn in prog["functions"]:
+    decisions, size = autotuner(call_graph, prog, depth, 5)
+    print(tuple((edge[0], edge[1]) for edge in decisions if decisions[edge]), size)    
 
 
     # print(states)
